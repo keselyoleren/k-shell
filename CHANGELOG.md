@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   `viu` or `lsix` show pictures, locally and over SSH. Decoded images take up to 64 MB per terminal by default;
   when that is full the oldest ones become a placeholder. Turn it off or change the limit in Settings → Terminal →
   Images. Session logs leave the image data out.
+- Resume interrupted transfers between this computer and an SFTP server. When the destination already holds part
+  of a file, the file manager asks to Resume, Overwrite or Skip. Resume continues from the bytes already there and
+  checks the final size. For a folder that already exists, Resume skips files that are complete and continues the
+  partial ones. FTP and object storage still copy from the start.
 
 ## [0.4.0] - 2026-11-05
 
