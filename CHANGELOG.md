@@ -9,6 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Added
 - Ten more terminal themes: Tomorrow Night, Material Darker, Iceberg, Oceanic Next, Cobalt2, Nightfox, Dayfox,
   Palenight, Zenburn and Horizon (35 in all).
+- Hosts show a logo: the detected OS for SSH hosts (Ubuntu, Debian, Fedora, Red Hat, Arch, Alpine, macOS, FreeBSD
+  and more), and the provider for object storage (Cloudflare R2, DigitalOcean Spaces, Wasabi, Backblaze B2, Google
+  Cloud, Scaleway, Hetzner, Linode, MinIO), found from the endpoint. Hosts without a known logo keep their letter
+  badge. Logos come from Simple Icons (CC0).
+- Images in the terminal: Sixel and the iTerm2 inline image protocol, so `img2sixel`, `imgcat`, `chafa`, `timg`,
+  `viu` or `lsix` show pictures, locally and over SSH. Decoded images take up to 64 MB per terminal by default;
+  when that is full the oldest ones become a placeholder. Turn it off or change the limit in Settings → Terminal →
+  Images. Session logs leave the image data out.
 - Resume interrupted transfers between this computer and an SFTP server. When the destination already holds part
   of a file, the file manager asks to Resume, Overwrite or Skip. Resume continues from the bytes already there and
   checks the final size. For a folder that already exists, Resume skips files that are complete and continues the

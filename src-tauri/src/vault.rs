@@ -188,6 +188,10 @@ pub struct Settings {
     /// Colour words matching `highlight_rules` in terminal output.
     pub highlight: bool,
     pub highlight_rules: Vec<HighlightRule>,
+    /// Show Sixel and iTerm2 inline images in terminals.
+    pub images: bool,
+    /// Memory for decoded images, per terminal, in MB (oldest images are dropped first).
+    pub image_memory_mb: u32,
 }
 
 /// Terminal output highlighting: words (comma separated) or a regular expression, drawn in
@@ -260,6 +264,8 @@ impl Default for Settings {
             log_dir: String::new(),
             highlight: true,
             highlight_rules: default_highlights(),
+            images: true,
+            image_memory_mb: 64,
         }
     }
 }
