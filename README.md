@@ -50,7 +50,7 @@ networking core and **Vue 3 + [xterm.js](https://xtermjs.org)** (WebGL) for the 
 
 | Area | What you get |
 |---|---|
-| **Hosts** | Groups, tags, colours, automatic OS detection, OS and storage-provider logos, search, recent hosts, grid/list view, duplicate, test connection, import from `~/.ssh/config` |
+| **Hosts** | Groups, tags, colours, automatic OS detection, OS and storage-provider logos, search, recent hosts, grid/list view, duplicate, test connection, import from `~/.ssh/config` and PuTTY (registry or `.reg` export) |
 | **Terminal** | Tabs (rename, reopened on launch), split panes (side by side / stacked, resizable; drag panes by their header to rearrange, drag a tab onto a terminal to merge it as a split), broadcast input to every pane of a tab, drop files onto a terminal to type their paths, find, copy-on-select, right-click paste, 35 colour themes, dark and light (optionally a separate one for light mode), custom bash/zsh prompt builder, history autosuggestions, startup command, one-key reconnect, automatic SSH reconnect, follows the shell's working directory, keyword highlighting, inline images (Sixel, iTerm2), session logs, local shell, workspaces that group local project folders (open one or all in their folder, with an optional startup command) |
 | **Authentication** | Password, keyboard-interactive, keys from the built-in keychain, ssh-agent / Pageant, default `~/.ssh/id_*` keys |
 | **Jump hosts** | ProxyJump chains (`laptop → bastion → … → target`) |

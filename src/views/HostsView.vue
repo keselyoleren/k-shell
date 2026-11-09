@@ -4,6 +4,7 @@ import { store, connectHost, openSftp, openMenu, confirm, toast, err, loadVault 
 import { api } from '../lib/api'
 import { isObjectStorage } from '../lib/os'
 import HostBadge from '../components/HostBadge.vue'
+import { importItems } from '../lib/importers'
 import Icon from '../components/Icon.vue'
 
 const q = ref('')
@@ -75,15 +76,6 @@ async function duplicate(h) {
     err(e)
   }
 }
-async function importConfig() {
-  try {
-    const n = await api.import_ssh_config()
-    await loadVault()
-    toast(`Imported ${n} host(s) from ~/.ssh/config`)
-  } catch (e) {
-    err(e)
-  }
-}
 
 async function test(h) {
   toast(`Testing ${h.label || h.host}…`)
@@ -136,7 +128,7 @@ function menu(e, h) {
       <button class="iconbtn" :class="{ active: layout === 'list' }" @click="setLayout('list')" title="List">
         <Icon name="list" />
       </button>
-      <button class="btn" @click="importConfig" title="Import from ~/.ssh/config">
+      <button class="btn" @click="openMenu($event, importItems())" title="Import hosts from ~/.ssh/config or PuTTY">
         <Icon name="import" :size="14" /> Import
       </button>
       <button class="btn primary" @click="edit(null)"><Icon name="plus" :size="14" /> New Host</button>
@@ -163,9 +155,9 @@ function menu(e, h) {
       <div v-if="!store.vault.hosts.length" class="empty">
         <Icon name="server" :size="40" />
         <div class="big">No hosts yet</div>
-        <div>Add an SSH server, FTP site or S3 bucket — or import your ~/.ssh/config.</div>
+        <div>Add an SSH server, FTP site or S3 bucket — or import your ~/.ssh/config or PuTTY sessions.</div>
         <div class="row" style="justify-content: center; margin-top: 8px">
-          <button class="btn" @click="importConfig">Import ~/.ssh/config</button>
+          <button class="btn" @click="openMenu($event, importItems())">Import…</button>
           <button class="btn primary" @click="edit(null)">New Host</button>
         </div>
       </div>

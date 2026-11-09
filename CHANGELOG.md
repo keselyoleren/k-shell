@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Import PuTTY sessions: from the registry on Windows, or from a `.reg` export of
+  `HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions` on any system. Host, port, user, agent forwarding,
+  the private key file (`.ppk`, added to the keychain) and an SSH proxy as jump host come along, into a "PuTTY"
+  group. PuTTY saves no passwords. Telnet, serial and other non-SSH sessions, and SOCKS/HTTP proxies, are listed as
+  skipped. Use Hosts → Import or Settings → Vault.
 - Ten more terminal themes: Tomorrow Night, Material Darker, Iceberg, Oceanic Next, Cobalt2, Nightfox, Dayfox,
   Palenight, Zenburn and Horizon (35 in all).
 - Hosts show a logo: the detected OS for SSH hosts (Ubuntu, Debian, Fedora, Red Hat, Arch, Alpine, macOS, FreeBSD

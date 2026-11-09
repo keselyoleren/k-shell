@@ -13,6 +13,7 @@ pub mod error;
 pub mod forward;
 pub mod fs;
 pub mod keys;
+pub mod putty;
 pub mod sessionlog;
 pub mod ssh;
 pub mod ssh_config;
@@ -96,6 +97,7 @@ pub fn run() {
             v::history_clear,
             v::known_host_delete,
             v::import_ssh_config,
+            v::import_putty,
             v::backup_export,
             v::backup_import,
             // terminals & ssh

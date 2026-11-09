@@ -39,6 +39,7 @@ const entries = await api.fs_list({ id, path: '/var/log' })
 | `history_clear` | – | – |
 | `known_host_delete` | `host, keyType` | – |
 | `import_ssh_config` | – | number of hosts imported |
+| `import_putty` | `path?: string` (a `.reg` export; without it, the Windows registry) | `{ imported, existing, skipped: string[], notes: string[] }` |
 | `backup_export` | `path, passphrase` | – |
 | `backup_import` | `path, passphrase` | number of hosts in the backup (merged) |
 
