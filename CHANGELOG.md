@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- The file manager shows an icon for each kind of file, in the colour of its language or type: code (Python, Rust,
+  Go, JavaScript, TypeScript and about 30 more), text and Markdown, PDF, spreadsheets, slides, images, video, audio,
+  archives, keys and certificates, lock files, databases, fonts, binaries, config files and shell scripts. Some
+  names are recognised on their own: `Dockerfile`, `docker-compose.yml`, `.gitignore`, `Makefile`, `package.json`,
+  `Cargo.toml`, `README`, `.env`, `id_ed25519`, `known_hosts`.
 - Ten more terminal themes: Tomorrow Night, Material Darker, Iceberg, Oceanic Next, Cobalt2, Nightfox, Dayfox,
   Palenight, Zenburn and Horizon (35 in all).
 - Hosts show a logo: the detected OS for SSH hosts (Ubuntu, Debian, Fedora, Red Hat, Arch, Alpine, macOS, FreeBSD
