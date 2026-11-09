@@ -28,6 +28,7 @@ import { actionFor, withHint } from '../lib/keymap'
 import { promptInjection, MARKER } from '../lib/prompt'
 import { resolveSnippet } from '../lib/snippetvars'
 import { createHighlighter } from '../lib/highlight'
+import { joinMultipartImages } from '../lib/iipmultipart'
 import { LineTracker, suggestFor, firstWord, cursorContext } from '../lib/suggest'
 import Icon from './Icon.vue'
 
@@ -422,13 +423,15 @@ function releaseGl() {
 // ---------- inline images (Sixel, iTerm2 inline images) ----------
 // img2sixel, imgcat, chafa, timg… draw pictures into the terminal. Decoded images are kept
 // per pane up to the memory limit (oldest dropped first, shown as a placeholder).
-let img = null
+let img = null,
+  imgJoin = null
 function configureImages() {
   if (!term) return
   const s = S()
   if (s.images === false) {
+    imgJoin?.dispose()
     img?.dispose()
-    img = null
+    img = imgJoin = null
     return
   }
   const mb = +s.image_memory_mb || 64
@@ -439,8 +442,9 @@ function configureImages() {
   try {
     img = new ImageAddon({ storageLimit: mb })
     term.loadAddon(img)
+    imgJoin = joinMultipartImages(term, img) // imgcat's default, multi-part form
   } catch {
-    img = null
+    img = imgJoin = null
   }
 }
 
