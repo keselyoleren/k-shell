@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
 ### Added
 - Import PuTTY sessions: from the registry on Windows, or from a `.reg` export of
   `HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions` on any system. Host, port, user, agent forwarding,
