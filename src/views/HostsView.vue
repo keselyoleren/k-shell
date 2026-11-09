@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import { store, connectHost, openSftp, openMenu, confirm, toast, err, loadVault } from '../lib/store'
 import { api } from '../lib/api'
-import { badge, isObjectStorage } from '../lib/os'
+import { isObjectStorage } from '../lib/os'
+import HostBadge from '../components/HostBadge.vue'
 import Icon from '../components/Icon.vue'
 
 const q = ref('')
@@ -153,7 +154,7 @@ function menu(e, h) {
         <div class="section-title">Recent</div>
         <div class="recent">
           <button v-for="h in recent" :key="h.id" class="rc" @click="connectHost(h)" @contextmenu="menu($event, h)">
-            <span class="badge sm" :style="{ background: badge(h).bg }">{{ badge(h).text }}</span>
+            <HostBadge class="sm" :host="h" />
             <span>{{ h.label || h.host }}</span>
           </button>
         </div>
@@ -181,7 +182,7 @@ function menu(e, h) {
             @dblclick="connectHost(h)"
             @contextmenu="menu($event, h)"
           >
-            <span class="badge" :style="{ background: badge(h).bg }">{{ badge(h).text }}</span>
+            <HostBadge :host="h" />
             <div class="meta">
               <div class="name">{{ h.label || h.host }}</div>
               <div class="sub mono">{{ sub(h) }}</div>

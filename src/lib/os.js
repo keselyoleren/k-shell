@@ -1,3 +1,5 @@
+import { LOGOS } from './logos'
+
 // Visual identity for hosts: OS / protocol badge colour + short label.
 const OS = {
   ubuntu: ['#e95420', 'U'],
@@ -25,7 +27,94 @@ function pick(name) {
   return PALETTE[h % PALETTE.length]
 }
 
+// /etc/os-release ID (or `uname -s`, lowercased) → logo in ./logos.js
+const OS_LOGO = {
+  ubuntu: 'ubuntu',
+  debian: 'debian',
+  centos: 'centos',
+  rhel: 'redhat',
+  fedora: 'fedora',
+  rocky: 'rockylinux',
+  almalinux: 'almalinux',
+  arch: 'archlinux',
+  alpine: 'alpinelinux',
+  opensuse: 'opensuse',
+  'opensuse-leap': 'opensuse',
+  'opensuse-tumbleweed': 'opensuse',
+  sles: 'suse',
+  sled: 'suse',
+  linux: 'linux',
+  darwin: 'apple',
+  freebsd: 'freebsd',
+  openbsd: 'openbsd',
+  raspbian: 'raspberrypi',
+  kali: 'kalilinux',
+  linuxmint: 'linuxmint',
+  manjaro: 'manjaro',
+  gentoo: 'gentoo',
+  nixos: 'nixos',
+}
+// S3-compatible endpoint host → provider logo. AWS (no endpoint) keeps the S3 badge.
+const S3_LOGO = [
+  [/\.r2\.cloudflarestorage\.com$/, 'cloudflare'],
+  [/digitaloceanspaces\.com$/, 'digitalocean'],
+  [/wasabisys\.com$/, 'wasabi'],
+  [/backblazeb2\.com$/, 'backblaze'],
+  [/^storage\.googleapis\.com$/, 'googlecloud'],
+  [/\.scw\.cloud$/, 'scaleway'],
+  [/your-objectstorage\.com$/, 'hetzner'],
+  [/linodeobjects\.com$/, 'akamai'],
+  [/minio/, 'minio'],
+]
+// Black brand colours vanish on the dark theme: these keep the badge colour they had.
+const LOGO_BG = { apple: '#6b7280', almalinux: '#0f4266' }
+
+function endpointHost(endpoint) {
+  try {
+    return new URL(/^[a-z]+:\/\//i.test(endpoint) ? endpoint : 'https://' + endpoint).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+/** The logo (key of LOGOS) for a host: its provider for object storage, its OS for SSH. */
+export function logoFor(h) {
+  if (h.protocol === 'gcs') return 'googlecloud'
+  if (h.protocol === 's3') {
+    const host = endpointHost(h.endpoint || '')
+    return host ? S3_LOGO.find(([re]) => re.test(host))?.[1] || null : null
+  }
+  if (!h.protocol || h.protocol === 'ssh') return OS_LOGO[h.os] || null
+  return null
+}
+
+/** Dark text on light colours (Linux yellow…), white otherwise. */
+function ink(bg) {
+  const m = /^#([0-9a-f]{6})$/i.exec(bg || '')
+  if (!m) return '#fff'
+  const n = parseInt(m[1], 16)
+  const [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((c) => {
+    c /= 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.45 ? '#1d1d1f' : '#fff'
+}
+
+/** Badge for a host: background, text colour, and a brand logo or a short label. */
 export function badge(h) {
+  const b = baseBadge(h)
+  const key = logoFor(h)
+  const logo = key && LOGOS[key]
+  if (logo) {
+    b.logo = logo
+    const custom = h.color && (!h.protocol || h.protocol === 'ssh') // a colour picked for an SSH host wins
+    if (!custom) b.bg = LOGO_BG[key] || logo.hex
+  }
+  b.fg = ink(b.bg)
+  return b
+}
+
+function baseBadge(h) {
   if (h.protocol === 's3') return { bg: '#C27C2C', text: 'S3', icon: 'cloud' }
   if (h.protocol === 'azblob') return { bg: '#2F6DB5', text: 'AZ', icon: 'cloud' }
   if (h.protocol === 'gcs') return { bg: '#3E7C7B', text: 'GCS', icon: 'cloud' }

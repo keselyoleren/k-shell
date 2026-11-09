@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Hosts show a logo: the detected OS for SSH hosts (Ubuntu, Debian, Fedora, Red Hat, Arch, Alpine, macOS, FreeBSD
+  and more), and the provider for object storage (Cloudflare R2, DigitalOcean Spaces, Wasabi, Backblaze B2, Google
+  Cloud, Scaleway, Hetzner, Linode, MinIO), found from the endpoint. Hosts without a known logo keep their letter
+  badge. Logos come from Simple Icons (CC0).
 - Resume interrupted transfers between this computer and an SFTP server. When the destination already holds part
   of a file, the file manager asks to Resume, Overwrite or Skip. Resume continues from the bytes already there and
   checks the final size. For a folder that already exists, Resume skips files that are complete and continues the
