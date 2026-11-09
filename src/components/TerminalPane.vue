@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { ImageAddon } from '@xterm/addon-image'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -27,6 +28,7 @@ import { actionFor, withHint } from '../lib/keymap'
 import { promptInjection, MARKER } from '../lib/prompt'
 import { resolveSnippet } from '../lib/snippetvars'
 import { createHighlighter } from '../lib/highlight'
+import { joinMultipartImages } from '../lib/iipmultipart'
 import { LineTracker, suggestFor, firstWord, cursorContext } from '../lib/suggest'
 import Icon from './Icon.vue'
 
@@ -356,10 +358,10 @@ const write = (data) => {
 
 // ---------- broadcast input ----------
 // xterm's onData also carries the terminal's own replies to the program running in it
-// (cursor position, device attributes, colour queries…), focus events and mouse reports.
-// Those belong to this pane only.
+// (cursor position, device attributes, window/cell size and graphics queries, colour
+// queries…), focus events and mouse reports. Those belong to this pane only.
 const AUTOMATIC =
-  /^\x1b(\[[\d;?>]*[Rcn]|\[\?[\d;]*\$y|\[[IO]$|\[<[\d;]*[Mm]|\[M|\][\s\S]*(\x07|\x1b\\)$|P[\s\S]*\x1b\\$)/
+  /^\x1b(\[[\d;?>]*[RcnSt]|\[\?[\d;]*\$y|\[[IO]$|\[<[\d;]*[Mm]|\[M|\][\s\S]*(\x07|\x1b\\)$|P[\s\S]*\x1b\\$)/
 /** Send typed text to this pane and, with broadcast on, to the other panes of the tab. */
 function typed(d) {
   write(d)
@@ -416,6 +418,34 @@ function releaseGl() {
   const a = gl
   gl = null
   a.dispose()
+}
+
+// ---------- inline images (Sixel, iTerm2 inline images) ----------
+// img2sixel, imgcat, chafa, timg… draw pictures into the terminal. Decoded images are kept
+// per pane up to the memory limit (oldest dropped first, shown as a placeholder).
+let img = null,
+  imgJoin = null
+function configureImages() {
+  if (!term) return
+  const s = S()
+  if (s.images === false) {
+    imgJoin?.dispose()
+    img?.dispose()
+    img = imgJoin = null
+    return
+  }
+  const mb = +s.image_memory_mb || 64
+  if (img) {
+    if (img.storageLimit !== mb) img.storageLimit = mb
+    return
+  }
+  try {
+    img = new ImageAddon({ storageLimit: mb })
+    term.loadAddon(img)
+    imgJoin = joinMultipartImages(term, img) // imgcat's default, multi-part form
+  } catch {
+    img = imgJoin = null
+  }
 }
 
 // ---------- files dropped from the OS: type their paths ----------
@@ -600,6 +630,7 @@ onMounted(async () => {
     }),
   )
   term.open(el.value)
+  configureImages()
   if (props.visible) attachGl()
   hl = createHighlighter(term)
   configureHighlight()
@@ -736,6 +767,7 @@ watch(
   () => {
     if (!term) return
     Object.assign(term.options, options())
+    configureImages()
     scheduleFit()
   },
   { deep: true },
