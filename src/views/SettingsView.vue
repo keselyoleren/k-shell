@@ -824,6 +824,26 @@ async function importConfig() {
             </template>
           </div>
 
+          <div class="section-title">Images</div>
+          <div class="card pad">
+            <div class="set">
+              <div>
+                <b>Show images in the terminal</b>
+                <div class="dim">Sixel and iTerm2 inline images, as drawn by img2sixel, imgcat, chafa or timg</div>
+              </div>
+              <button class="switch" :class="{ on: s.images }" @click="s.images = !s.images"></button>
+            </div>
+            <div v-if="s.images" class="set">
+              <div>
+                <b>Image memory per terminal</b>
+                <div class="dim">When it is full, the oldest images are replaced by a placeholder</div>
+              </div>
+              <select class="select" style="width: 110px" v-model.number="s.image_memory_mb">
+                <option v-for="mb in [16, 32, 64, 128, 256]" :key="mb" :value="mb">{{ mb }} MB</option>
+              </select>
+            </div>
+          </div>
+
           <div class="section-title">Session logs</div>
           <div class="card pad">
             <div class="set">
