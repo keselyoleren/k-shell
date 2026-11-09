@@ -119,6 +119,8 @@ function baseBadge(h) {
   if (h.protocol === 'azblob') return { bg: '#2F6DB5', text: 'AZ', icon: 'cloud' }
   if (h.protocol === 'gcs') return { bg: '#3E7C7B', text: 'GCS', icon: 'cloud' }
   if (h.protocol === 'ftp' || h.protocol === 'ftps') return { bg: '#6B5B95', text: 'FTP', icon: 'folder' }
+  if (h.protocol === 'telnet') return { bg: '#4A6B82', text: 'TEL' }
+  if (h.protocol === 'serial') return { bg: '#7A6232', text: 'TTY' }
   if (h.color) return { bg: h.color, text: (h.label || h.host || '?')[0].toUpperCase() }
   const o = OS[h.os]
   if (o) return { bg: o[0], text: o[1] || (h.label || '?')[0].toUpperCase() }
@@ -134,7 +136,17 @@ export const PROTOCOLS = [
   { id: 's3', label: 'S3-compatible', port: 0 },
   { id: 'azblob', label: 'Azure Blob', port: 0 },
   { id: 'gcs', label: 'Google Cloud Storage', port: 0 },
+  { id: 'telnet', label: 'Telnet', port: 23 },
+  { id: 'serial', label: 'Serial', port: 0 },
 ]
+
+/** Protocols that open a terminal tab (the rest open the file manager). */
+export const TERMINAL_PROTOCOLS = ['ssh', 'telnet', 'serial']
+export const opensTerminal = (protocol) => TERMINAL_PROTOCOLS.includes(protocol || 'ssh')
+
+/** Serial line settings offered in the host editor. */
+export const BAUD_RATES = [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
+export const SERIAL_DEFAULTS = { baud_rate: 9600, data_bits: 8, parity: 'none', stop_bits: 1, flow_control: 'none' }
 
 /** Protocols that browse buckets/containers instead of a server's file system. */
 export const OBJECT_PROTOCOLS = ['s3', 'azblob', 'gcs']

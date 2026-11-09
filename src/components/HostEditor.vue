@@ -1,9 +1,9 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { store, loadVault, toast, err } from '../lib/store'
 import { api } from '../lib/api'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { PROTOCOLS, S3_PRESETS, isObjectStorage } from '../lib/os'
+import { PROTOCOLS, S3_PRESETS, BAUD_RATES, SERIAL_DEFAULTS, isObjectStorage } from '../lib/os'
 import Icon from './Icon.vue'
 
 const blank = {
@@ -30,8 +30,10 @@ const blank = {
   path_style: false,
   virtual_hosted: false,
   credential: '',
+  ...SERIAL_DEFAULTS,
 }
 const h = reactive({ ...blank, ...(store.editor.host || {}) })
+for (const [k, v] of Object.entries(SERIAL_DEFAULTS)) if (!h[k]) h[k] = v // saved before serial existed
 const tags = ref((h.tags || []).join(', '))
 const showPass = ref(false)
 const testing = ref(false)
@@ -46,6 +48,27 @@ function setProto(p) {
   h.protocol = p
 }
 const isObj = computed(() => isObjectStorage(h.protocol))
+const isSerial = computed(() => h.protocol === 'serial')
+
+// ---------- serial ports on this computer ----------
+const ports = ref([])
+const findingPorts = ref(false)
+async function findPorts(announce = false) {
+  findingPorts.value = true
+  try {
+    ports.value = await api.serial_ports()
+    if (announce)
+      toast(
+        ports.value.length
+          ? `Found ${ports.value.length} serial port${ports.value.length > 1 ? 's' : ''}`
+          : 'No serial ports found',
+      )
+  } catch (e) {
+    if (announce) err(e)
+  }
+  findingPorts.value = false
+}
+watch(isSerial, (on) => on && findPorts(), { immediate: true })
 
 // S3 URL style: 'path' = https://endpoint/bucket, 'virtual' = https://bucket.endpoint
 const urlStyle = computed({
@@ -86,7 +109,7 @@ function payload() {
   }
 }
 async function save() {
-  if (!isObj.value && !h.host) return toast('Address is required', 'error')
+  if (!isObj.value && !h.host) return toast(isSerial.value ? 'Serial port is required' : 'Address is required', 'error')
   if ((h.protocol === 'azblob' || h.protocol === 'gcs') && !h.bucket)
     return toast(h.protocol === 'azblob' ? 'Container is required' : 'Bucket is required', 'error')
   try {
@@ -101,6 +124,8 @@ async function test() {
   testing.value = true
   try {
     if (h.protocol === 'ssh') toast(await api.ssh_test({ host: { ...payload(), id: h.id || 'test' } }))
+    else if (h.protocol === 'telnet') toast(await api.telnet_test({ host: payload() }))
+    else if (isSerial.value) toast(await api.serial_test({ host: payload() }))
     else {
       const r = await api.fs_open({ host: payload() })
       await api.fs_list({ id: r.id, path: r.home })
@@ -135,7 +160,38 @@ async function test() {
           </button>
         </div>
 
-        <template v-if="!isObj">
+        <template v-if="isSerial">
+          <div class="field">
+            <label>Serial port</label>
+            <div class="pw">
+              <input
+                class="input mono"
+                v-model.trim="h.host"
+                list="serial-ports"
+                :placeholder="store.platform.os === 'windows' ? 'COM3' : '/dev/ttyUSB0'"
+                spellcheck="false"
+                autofocus
+              />
+              <datalist id="serial-ports">
+                <option v-for="p in ports" :key="p.name" :value="p.name">{{ p.description }}</option>
+              </datalist>
+              <button
+                type="button"
+                class="iconbtn"
+                title="Find serial ports"
+                :disabled="findingPorts"
+                @click="findPorts(true)"
+              >
+                <Icon name="refresh" />
+              </button>
+            </div>
+          </div>
+          <p class="hint" v-if="store.platform.os === 'macos'">
+            Use the <span class="mono">/dev/cu.*</span> device: <span class="mono">/dev/tty.*</span> waits for the other
+            side to signal before it opens.
+          </p>
+        </template>
+        <template v-else-if="!isObj">
           <div class="row">
             <div class="field" style="flex: 3">
               <label>Address</label
@@ -246,6 +302,55 @@ async function test() {
           </div>
           <p class="hint">
             Leave the key empty for public buckets (read-only). Share links need a service account key.
+          </p>
+        </template>
+
+        <template v-else-if="isSerial">
+          <div class="section-title">Line settings</div>
+          <div class="row">
+            <div class="field">
+              <label>Baud rate</label>
+              <input class="input" v-model.number="h.baud_rate" type="number" min="1" list="bauds" />
+              <datalist id="bauds"><option v-for="b in BAUD_RATES" :key="b" :value="b" /></datalist>
+            </div>
+            <div class="field">
+              <label>Data bits</label>
+              <select class="select" v-model.number="h.data_bits">
+                <option v-for="n in [8, 7, 6, 5]" :key="n" :value="n">{{ n }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>Parity</label>
+              <select class="select" v-model="h.parity">
+                <option value="none">None</option>
+                <option value="odd">Odd</option>
+                <option value="even">Even</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Stop bits</label>
+              <select class="select" v-model.number="h.stop_bits">
+                <option :value="1">1</option>
+                <option :value="2">2</option>
+              </select>
+            </div>
+          </div>
+          <div class="field">
+            <label>Flow control</label>
+            <select class="select" v-model="h.flow_control">
+              <option value="none">None</option>
+              <option value="software">Software (XON/XOFF)</option>
+              <option value="hardware">Hardware (RTS/CTS)</option>
+            </select>
+          </div>
+        </template>
+
+        <template v-else-if="h.protocol === 'telnet'">
+          <p class="hint">
+            Telnet is not encrypted: what you type, passwords included, crosses the network as plain text. Log in at the
+            prompt the device shows.
           </p>
         </template>
 

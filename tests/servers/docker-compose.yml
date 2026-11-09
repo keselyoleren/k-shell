@@ -65,3 +65,11 @@ services:
     image: fsouza/fake-gcs-server
     command: -scheme http -port 4443 -public-host 127.0.0.1:4443 -backend memory
     ports: ["4443:4443"]
+
+  # Telnet server: busybox telnetd with a plain shell as its "login" program.
+  telnet:
+    container_name: kshell-telnet
+    image: busybox:1.36
+    command: ["telnetd", "-F", "-p", "2323", "-l", "/bin/sh"]
+    ports: ["2323:2323"]
+    healthcheck: { test: ["CMD", "nc", "-z", "127.0.0.1", "2323"], interval: 3s, retries: 40 }

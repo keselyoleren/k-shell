@@ -5,7 +5,7 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 
 use super::State;
 use crate::error::Res;
-use crate::terminal::{Cmd, LocalOptions, ShellOptions};
+use crate::terminal::{Cmd, LocalOptions, ShellOptions, TelnetOptions};
 use crate::vault::Host;
 
 /// Open an SSH shell. Output streams to `on_data` as raw bytes; a JSON
@@ -54,6 +54,74 @@ pub fn term_open_local(
     let opts =
         LocalOptions { cols, rows, shell, cwd, startup_command: startup_command.unwrap_or_default(), log };
     st.terminals.open_local(id, opts, on_data)
+}
+
+/// Open a Telnet session to `host` (address and port from the host). Output and the exit
+/// message stream to `on_data` like an SSH shell's.
+#[tauri::command]
+pub async fn term_open_telnet(
+    st: State<'_>,
+    id: String,
+    host: Host,
+    cols: u16,
+    rows: u16,
+    on_data: Channel<InvokeResponseBody>,
+) -> Res<()> {
+    let label = if host.label.is_empty() { host.host.clone() } else { host.label.clone() };
+    let log = session_log(&st, &label);
+    let port = host.addr_port();
+    let opts = TelnetOptions { host: host.host.trim().to_string(), port, cols, rows, log };
+    st.terminals.open_telnet(id, opts, on_data).await
+}
+
+/// Open the serial port of a serial-console host (`host.host` is the device).
+#[tauri::command]
+pub fn term_open_serial(st: State, id: String, host: Host, on_data: Channel<InvokeResponseBody>) -> Res<()> {
+    let label = if host.label.is_empty() { host.host.clone() } else { host.label.clone() };
+    let log = session_log(&st, &label);
+    st.terminals.open_serial(id, host.serial(), log, on_data)
+}
+
+/// Serial ports on this computer: `[{ name, description }]`.
+#[tauri::command]
+pub fn serial_ports() -> Res<Vec<Value>> {
+    let ports = serialport::available_ports().map_err(|e| format!("Couldn't list serial ports: {e}"))?;
+    Ok(ports
+        .into_iter()
+        .map(|p| {
+            let description = match p.port_type {
+                serialport::SerialPortType::UsbPort(u) => {
+                    [u.manufacturer, u.product].into_iter().flatten().collect::<Vec<_>>().join(" ")
+                }
+                serialport::SerialPortType::BluetoothPort => "Bluetooth".into(),
+                serialport::SerialPortType::PciPort => "PCI".into(),
+                serialport::SerialPortType::Unknown => String::new(),
+            };
+            json!({ "name": p.port_name, "description": description })
+        })
+        .collect())
+}
+
+/// Check that a Telnet server accepts connections.
+#[tauri::command]
+pub async fn telnet_test(host: Host) -> Res<String> {
+    let port = host.addr_port();
+    let started = std::time::Instant::now();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::net::TcpStream::connect((host.host.trim(), port)),
+    )
+    .await
+    .map_err(|_| format!("Timed out connecting to {}:{port}", host.host.trim()))?
+    .map_err(|e| format!("Couldn't connect to {}:{port}: {e}", host.host.trim()))?;
+    Ok(format!("Connected in {} ms", started.elapsed().as_millis()))
+}
+
+/// Check that a serial port can be opened with the host's settings.
+#[tauri::command]
+pub fn serial_test(host: Host) -> Res<String> {
+    drop(host.serial().open()?);
+    Ok(format!("{} opened", host.host.trim()))
 }
 
 /// A new session log when logging is on in the settings (a log that can't be created is

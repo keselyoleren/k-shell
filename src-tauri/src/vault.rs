@@ -33,7 +33,7 @@ pub struct Host {
     pub label: String,
     pub group: String,
     pub tags: Vec<String>,
-    /// ssh | ftp | ftps | s3
+    /// ssh | ftp | ftps | s3 | azblob | gcs | telnet | serial
     pub protocol: String,
     pub host: String,
     pub port: u16,
@@ -58,17 +58,38 @@ pub struct Host {
     pub virtual_hosted: bool,
     /// Google Cloud Storage service-account key (JSON).
     pub credential: String,
+    // Serial console (`host` holds the device: /dev/ttyUSB0, COM3…). 0 / "" = defaults.
+    pub baud_rate: u32,
+    pub data_bits: u8,
+    /// none | odd | even
+    pub parity: String,
+    pub stop_bits: u8,
+    /// none | software | hardware
+    pub flow_control: String,
     pub created_at: i64,
     pub last_used: i64,
 }
 
 impl Host {
+    /// Serial settings of a serial-console host.
+    pub fn serial(&self) -> crate::terminal::SerialOptions {
+        crate::terminal::SerialOptions {
+            path: self.host.clone(),
+            baud_rate: self.baud_rate,
+            data_bits: self.data_bits,
+            parity: self.parity.clone(),
+            stop_bits: self.stop_bits,
+            flow_control: self.flow_control.clone(),
+        }
+    }
+
     pub fn addr_port(&self) -> u16 {
         if self.port != 0 {
             return self.port;
         }
         match self.protocol.as_str() {
             "ftp" | "ftps" => 21,
+            "telnet" => 23,
             _ => 22,
         }
     }

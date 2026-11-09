@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Telnet and serial console hosts, for switches, routers and boards that don't speak SSH. Telnet hosts take an
+  address and port (23 by default) and send the window size and terminal type to the server. Serial hosts take the
+  port (`/dev/ttyUSB0`, `/dev/cu.usbserial-…`, `COM3`; the editor lists the ones it finds), baud rate, data bits,
+  parity, stop bits and flow control. Both open as terminal tabs with splits, broadcast, snippets and session logs;
+  they don't reconnect by themselves, press Enter to reconnect.
 - Hosts show a logo: the detected OS for SSH hosts (Ubuntu, Debian, Fedora, Red Hat, Arch, Alpine, macOS, FreeBSD
   and more), and the provider for object storage (Cloudflare R2, DigitalOcean Spaces, Wasabi, Backblaze B2, Google
   Cloud, Scaleway, Hetzner, Linode, MinIO), found from the endpoint. Hosts without a known logo keep their letter
