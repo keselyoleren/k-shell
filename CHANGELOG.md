@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Ten more terminal themes: Tomorrow Night, Material Darker, Iceberg, Oceanic Next, Cobalt2, Nightfox, Dayfox,
+  Palenight, Zenburn and Horizon (35 in all).
 - Hosts show a logo: the detected OS for SSH hosts (Ubuntu, Debian, Fedora, Red Hat, Arch, Alpine, macOS, FreeBSD
   and more), and the provider for object storage (Cloudflare R2, DigitalOcean Spaces, Wasabi, Backblaze B2, Google
   Cloud, Scaleway, Hetzner, Linode, MinIO), found from the endpoint. Hosts without a known logo keep their letter
