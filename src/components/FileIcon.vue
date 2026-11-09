@@ -8,6 +8,19 @@ const icon = computed(() => fileIcon(props.name || ''))
 
 <template>
   <svg
+    v-if="icon.logo"
+    :width="size"
+    :height="size"
+    viewBox="-1.5 -1.5 27 27"
+    class="icon fileicon logo"
+    :style="{ color: icon.color }"
+    aria-hidden="true"
+  >
+    <title>{{ icon.logo.title }}</title>
+    <path :d="icon.logo.path" fill="currentColor" />
+  </svg>
+  <svg
+    v-else
     :width="size"
     :height="size"
     viewBox="0 0 24 24"
