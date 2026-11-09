@@ -41,6 +41,8 @@ const searching = ref(false)
 const query = ref('')
 const searchInput = ref(null)
 const target = props.leaf.target
+/** local | ssh | telnet | serial */
+const proto = target.kind === 'local' ? 'local' : target.host.protocol || 'ssh'
 const title = computed(() =>
   target.kind === 'local' ? target.title || 'Local' : target.host.label || target.host.host,
 )
@@ -169,6 +171,7 @@ let inj = null // { id, phase: 'wait' | 'hide', seen, chunks, quiet, max }
 function injectionPlan() {
   const s = S()
   const local = target.kind === 'local'
+  if (proto === 'telnet' || proto === 'serial') return null // a device's console, not a shell we know
   // Only into a plain bash/zsh login shell: a startup command (tmux attach, sudo -i…) would
   // receive the line instead.
   const safe = local
@@ -260,7 +263,8 @@ async function connect() {
       cancelPrompt()
       status.value = 'closed'
       // An SSH shell that ends without an exit status lost its connection: try again by itself.
-      if (target.kind === 'ssh' && ev.code == null && S().auto_reconnect !== false) {
+      // (Telnet and serial have no exit status, so a dropped line can't be told from a logout.)
+      if (proto === 'ssh' && ev.code == null && S().auto_reconnect !== false) {
         term.write('\r\n\x1b[33m[connection lost]\x1b[0m\r\n')
         return scheduleReconnect()
       }
@@ -282,6 +286,17 @@ async function connect() {
         startupCommand: target.startup_command || null,
         onData: ch,
       })
+    } else if (proto === 'telnet') {
+      const port = target.host.port || 23
+      term.write(`\x1b[2mConnecting to ${target.host.host}${port !== 23 ? ':' + port : ''} (Telnet)…\x1b[0m\r\n`)
+      await api.term_open_telnet({ id, host: target.host, cols: term.cols, rows: term.rows, onData: ch })
+    } else if (proto === 'serial') {
+      const h = target.host
+      const parity = { odd: 'O', even: 'E' }[h.parity] || 'N'
+      term.write(
+        `\x1b[2mOpening ${h.host} at ${h.baud_rate || 9600} baud, ${h.data_bits || 8}${parity}${h.stop_bits || 1}…\x1b[0m\r\n`,
+      )
+      await api.term_open_serial({ id, host: h, onData: ch })
     } else {
       term.write(
         `\x1b[2mConnecting to ${target.host.username ? target.host.username + '@' : ''}${target.host.host}…\x1b[0m\r\n`,
@@ -566,13 +581,17 @@ function menu(e) {
     '-',
     { label: 'Split right', icon: 'splitH', action: () => splitFocused('row') },
     { label: 'Split down', icon: 'splitV', action: () => splitFocused('col') },
-    target.kind === 'ssh'
-      ? { label: 'Open SFTP here', icon: 'folder', action: () => openSftp(target.host, { right: props.leaf.cwd }) }
-      : {
-          label: 'Open in file manager',
-          icon: 'folder',
-          action: () => openSftp(null, { left: props.leaf.cwd || target.cwd }),
-        },
+    ...(proto === 'ssh'
+      ? [{ label: 'Open SFTP here', icon: 'folder', action: () => openSftp(target.host, { right: props.leaf.cwd }) }]
+      : proto === 'local'
+        ? [
+            {
+              label: 'Open in file manager',
+              icon: 'folder',
+              action: () => openSftp(null, { left: props.leaf.cwd || target.cwd }),
+            },
+          ]
+        : []),
     ...(store.vault.snippets.length
       ? [
           '-',
