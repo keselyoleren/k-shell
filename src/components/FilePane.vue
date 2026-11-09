@@ -5,6 +5,7 @@ import { store, openMenu, prompt, confirm, toast, err } from '../lib/store'
 import { join, parent, crumbs } from '../lib/paths'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import Icon from './Icon.vue'
+import FileIcon from './FileIcon.vue'
 import { fileKind, runsWhenOpened } from '../lib/filetypes'
 import { isObjectStorage } from '../lib/os'
 
@@ -273,7 +274,7 @@ function rowDown(ev, e) {
         @contextmenu="rowMenu($event, e)"
       >
         <span class="c-name"
-          ><Icon :name="e.is_dir ? 'folder' : 'file'" :size="15" :class="e.is_dir ? 'dir' : 'fi'" />
+          ><Icon v-if="e.is_dir" name="folder" :size="15" class="dir" /><FileIcon v-else :name="e.name" class="fi" />
           <span class="n">{{ e.name }}</span
           ><span v-if="e.is_link" class="dim"> ↪</span></span
         >

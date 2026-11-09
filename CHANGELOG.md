@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- The file manager shows an icon for each kind of file, in the colour of its language or type: code (Python, Rust,
+  Go, JavaScript, TypeScript and about 30 more), text and Markdown, PDF, spreadsheets, slides, images, video, audio,
+  archives, keys and certificates, lock files, databases, fonts, binaries, config files and shell scripts. Some
+  names are recognised on their own: `Dockerfile`, `docker-compose.yml`, `.gitignore`, `Makefile`, `package.json`,
+  `Cargo.toml`, `README`, `.env`, `id_ed25519`, `known_hosts`.
 - Telnet and serial console hosts, for switches, routers and boards that don't speak SSH. Telnet hosts take an
   address and port (23 by default) and send the window size and terminal type to the server. Serial hosts take the
   port (`/dev/ttyUSB0`, `/dev/cu.usbserial-…`, `COM3`; the editor lists the ones it finds), baud rate, data bits,
