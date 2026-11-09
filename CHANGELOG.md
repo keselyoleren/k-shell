@@ -12,11 +12,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   the private key file (`.ppk`, added to the keychain) and an SSH proxy as jump host come along, into a "PuTTY"
   group. PuTTY saves no passwords. Telnet, serial and other non-SSH sessions, and SOCKS/HTTP proxies, are listed as
   skipped. Use Hosts → Import or Settings → Vault.
-- The file manager shows an icon for each kind of file, in the colour of its language or type: code (Python, Rust,
-  Go, JavaScript, TypeScript and about 30 more), text and Markdown, PDF, spreadsheets, slides, images, video, audio,
-  archives, keys and certificates, lock files, databases, fonts, binaries, config files and shell scripts. Some
-  names are recognised on their own: `Dockerfile`, `docker-compose.yml`, `.gitignore`, `Makefile`, `package.json`,
-  `Cargo.toml`, `README`, `.env`, `id_ed25519`, `known_hosts`.
+- The file manager shows an icon for each kind of file. Code and tooling files show the logo of their language or
+  tool (Python, JavaScript, TypeScript, React, Rust, Go, Java, Kotlin, C, C++, .NET, PHP, Ruby, Swift, Vue, Svelte,
+  HTML, CSS, Sass, JSON, YAML, Markdown, Bash, Terraform, Docker, Git, npm and about 40 more), also for names such
+  as `package.json`, `Cargo.toml`, `go.mod`, `Dockerfile`, `.gitignore`, `.env` and `vite.config.ts`. Other files
+  get a page with a mark for their type: text, PDF, spreadsheet, slides, image, video, audio, archive, key, lock,
+  database, font, binary, config or script. Logos come from Simple Icons (CC0).
 - Telnet and serial console hosts, for switches, routers and boards that don't speak SSH. Telnet hosts take an
   address and port (23 by default) and send the window size and terminal type to the server. Serial hosts take the
   port (`/dev/ttyUSB0`, `/dev/cu.usbserial-…`, `COM3`; the editor lists the ones it finds), baud rate, data bits,

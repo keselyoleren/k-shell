@@ -2,6 +2,7 @@
 // Drawn in the same 24×24, 1.8-stroke style as Icon.vue.
 
 import { extOf } from './filetypes'
+import { LANG_LOGOS } from './langlogos'
 
 const PAGE = 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6'
 
@@ -187,8 +188,167 @@ const BY_NAME = {
   crontab: ['config', C.config],
 }
 
-/** { kind, color } for a file name. */
+// ---------- language and tool logos ----------
+// Code and tooling files show the logo of their language or tool instead of the page.
+// Brand colours that disappear on the dark theme (black) or the light one (pale yellow,
+// white) are toned; the rest keep the brand colour.
+const LOGO_COLOR = {
+  rust: C.rs,
+  openjdk: C.java,
+  json: C.json,
+  markdown: C.md,
+  javascript: C.js,
+  react: '#1fa8d1',
+  c: C.c,
+  cplusplus: '#5b8fd6',
+  dotnet: C.cs,
+  lua: C.lua,
+  less: '#4a6fa5',
+  haskell: C.hs,
+  prisma: '#5a67d8',
+  gradle: '#4d9fb0',
+  cmake: '#3f7fc0',
+  xml: C.xml,
+  perl: '#3c96c8',
+  bun: '#c9a26b',
+  deno: C.text,
+  dotenv: '#c9a400',
+  editorconfig: C.text,
+  css: '#7e57c2',
+  prettier: '#d9a02a',
+}
+
+const LOGO_BY_EXT = {}
+const logo = (exts, slug) => exts.split(' ').forEach((e) => (LOGO_BY_EXT[e] = slug))
+logo('py pyw pyi', 'python')
+logo('ipynb', 'jupyter')
+logo('js mjs cjs', 'javascript')
+logo('ts mts cts', 'typescript')
+logo('jsx tsx', 'react')
+logo('rs', 'rust')
+logo('go', 'go')
+logo('java jar class', 'openjdk')
+logo('kt kts', 'kotlin')
+logo('c h', 'c')
+logo('cpp cc cxx hpp hh hxx', 'cplusplus')
+logo('cs csproj sln vb', 'dotnet')
+logo('fs fsx fsi', 'fsharp')
+logo('php', 'php')
+logo('rb erb gemspec rake', 'ruby')
+logo('swift', 'swift')
+logo('vue', 'vuedotjs')
+logo('svelte', 'svelte')
+logo('astro', 'astro')
+logo('html htm xhtml', 'html5')
+logo('css', 'css')
+logo('scss sass', 'sass')
+logo('less', 'less')
+logo('json jsonc json5', 'json')
+logo('yaml yml', 'yaml')
+logo('md markdown mdx', 'markdown')
+logo('lua', 'lua')
+logo('dart', 'dart')
+logo('tf tfvars hcl', 'terraform')
+logo('r rmd', 'r')
+logo('ex exs heex', 'elixir')
+logo('erl hrl', 'erlang')
+logo('hs lhs', 'haskell')
+logo('zig', 'zig')
+logo('nix', 'nixos')
+logo('sh bash zsh ksh', 'gnubash')
+logo('pl pm', 'perl')
+logo('scala sc', 'scala')
+logo('clj cljs cljc edn', 'clojure')
+logo('jl', 'julia')
+logo('ml mli', 'ocaml')
+logo('toml', 'toml')
+logo('xml xsd xsl plist', 'xml')
+logo('graphql gql', 'graphql')
+logo('prisma', 'prisma')
+logo('wasm wat', 'webassembly')
+logo('tex sty cls bib', 'latex')
+logo('gradle', 'gradle')
+
+// whole file names (lower case) → logo
+const LOGO_BY_NAME = {
+  dockerfile: 'docker',
+  containerfile: 'docker',
+  'docker-compose.yml': 'docker',
+  'docker-compose.yaml': 'docker',
+  'compose.yml': 'docker',
+  'compose.yaml': 'docker',
+  '.dockerignore': 'docker',
+  '.gitignore': 'git',
+  '.gitattributes': 'git',
+  '.gitmodules': 'git',
+  '.gitconfig': 'git',
+  'package.json': 'npm',
+  'package-lock.json': 'npm',
+  '.npmrc': 'npm',
+  'yarn.lock': 'yarn',
+  '.yarnrc': 'yarn',
+  '.yarnrc.yml': 'yarn',
+  'pnpm-lock.yaml': 'pnpm',
+  'pnpm-workspace.yaml': 'pnpm',
+  'bun.lockb': 'bun',
+  'bun.lock': 'bun',
+  'bunfig.toml': 'bun',
+  'deno.json': 'deno',
+  'deno.jsonc': 'deno',
+  '.nvmrc': 'nodedotjs',
+  '.node-version': 'nodedotjs',
+  'cargo.toml': 'rust',
+  'cargo.lock': 'rust',
+  'rust-toolchain.toml': 'rust',
+  'go.mod': 'go',
+  'go.sum': 'go',
+  'go.work': 'go',
+  'requirements.txt': 'python',
+  'pyproject.toml': 'python',
+  pipfile: 'python',
+  'pipfile.lock': 'python',
+  'setup.py': 'python',
+  gemfile: 'ruby',
+  'gemfile.lock': 'ruby',
+  rakefile: 'ruby',
+  'composer.json': 'php',
+  'composer.lock': 'php',
+  'pom.xml': 'apachemaven',
+  'build.gradle': 'gradle',
+  'build.gradle.kts': 'gradle',
+  'settings.gradle': 'gradle',
+  'cmakelists.txt': 'cmake',
+  '.editorconfig': 'editorconfig',
+  'nginx.conf': 'nginx',
+  'ansible.cfg': 'ansible',
+}
+
+function logoFor(n) {
+  if (LOGO_BY_NAME[n]) return LOGO_BY_NAME[n]
+  if (n.startsWith('.env')) return 'dotenv'
+  if (/^dockerfile[.-]/.test(n) || /\.dockerfile$/.test(n)) return 'docker'
+  if (/^\.prettierrc|^prettier\.config\./.test(n)) return 'prettier'
+  if (/^\.eslintrc|^eslint\.config\./.test(n)) return 'eslint'
+  if (/^vite\.config\./.test(n)) return 'vite'
+  if (/^tailwind\.config\./.test(n)) return 'tailwindcss'
+  if (/^(kustomization|.*\.k8s)\.ya?ml$/.test(n)) return 'kubernetes'
+  if (/\.d\.ts$/.test(n)) return 'typescript'
+  return LOGO_BY_EXT[extOf(n)] || null
+}
+
+/** { kind, color, logo? } for a file name: `logo` is { title, path } for code and tooling. */
 export function fileIcon(name) {
+  const n0 = name.toLowerCase()
+  const slug = logoFor(n0)
+  if (slug && LANG_LOGOS[slug]) {
+    const l = LANG_LOGOS[slug]
+    return { kind: 'logo', color: LOGO_COLOR[slug] || l.hex, logo: { title: l.title, path: l.path } }
+  }
+  return pageIcon(name)
+}
+
+/** { kind, color } for files without a logo. */
+function pageIcon(name) {
   const n = name.toLowerCase()
   const hit = BY_NAME[n]
   if (hit) return { kind: hit[0], color: hit[1] }
