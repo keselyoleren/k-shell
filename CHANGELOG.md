@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Images in the terminal: Sixel and the iTerm2 inline image protocol, so `img2sixel`, `imgcat`, `chafa`, `timg`,
+  `viu` or `lsix` show pictures, locally and over SSH. Decoded images take up to 64 MB per terminal by default;
+  when that is full the oldest ones become a placeholder. Turn it off or change the limit in Settings → Terminal →
+  Images. Session logs leave the image data out.
+
 ## [0.4.0] - 2026-11-05
 
 ### Added

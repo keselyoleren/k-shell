@@ -193,6 +193,13 @@ mod tests {
     }
 
     #[test]
+    fn inline_images_are_left_out() {
+        // Sixel (DCS … q … ST) and an iTerm2 inline image (OSC 1337;File=… BEL)
+        let out = run(b"a\x1bPq#0;2;0;0;0#0~~~~$-\x1b\\b\n\x1b]1337;File=inline=1:iVBORw0KGgo=\x07c\n");
+        assert_eq!(out, "ab\nc\n");
+    }
+
+    #[test]
     fn last_line_flushed_on_drop() {
         assert_eq!(run(b"no newline"), "no newline\n");
     }
