@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Import PuTTY sessions: from the registry on Windows, or from a `.reg` export of
+  `HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions` on any system. Host, port, user, agent forwarding,
+  the private key file (`.ppk`, added to the keychain) and an SSH proxy as jump host come along, into a "PuTTY"
+  group. PuTTY saves no passwords. Telnet, serial and other non-SSH sessions, and SOCKS/HTTP proxies, are listed as
+  skipped. Use Hosts → Import or Settings → Vault.
 - The file manager shows an icon for each kind of file, in the colour of its language or type: code (Python, Rust,
   Go, JavaScript, TypeScript and about 30 more), text and Markdown, PDF, spreadsheets, slides, images, video, audio,
   archives, keys and certificates, lock files, databases, fonts, binaries, config files and shell scripts. Some

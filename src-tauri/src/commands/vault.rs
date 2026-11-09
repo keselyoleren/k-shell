@@ -144,6 +144,31 @@ pub fn import_ssh_config(st: State) -> Res<usize> {
     Ok(n)
 }
 
+/// Import PuTTY sessions: from the `.reg` file at `path`, or (Windows) from the registry.
+#[tauri::command]
+pub fn import_putty(st: State, path: Option<String>) -> Res<crate::putty::Report> {
+    let sessions = match path.filter(|p| !p.trim().is_empty()) {
+        Some(p) => crate::putty::parse_reg(&crate::putty::reg_text(&std::fs::read(&p).ctx(&p)?)),
+        None => registry_sessions()?,
+    };
+    if sessions.is_empty() {
+        return Err("No PuTTY sessions found".into());
+    }
+    let report = crate::putty::import(&mut st.vault.data.write(), sessions);
+    st.vault.save()?;
+    Ok(report)
+}
+
+#[cfg(windows)]
+fn registry_sessions() -> Res<Vec<crate::putty::Session>> {
+    crate::putty::read_registry()
+}
+
+#[cfg(not(windows))]
+fn registry_sessions() -> Res<Vec<crate::putty::Session>> {
+    Err("PuTTY keeps its sessions in the Windows registry: export them to a .reg file there and import that file".into())
+}
+
 #[tauri::command]
 pub fn backup_export(st: State, path: String, passphrase: String) -> Res<()> {
     let blob = vault::export_backup(&st.vault.data.read(), &passphrase)?;

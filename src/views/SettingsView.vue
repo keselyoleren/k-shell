@@ -1,4 +1,5 @@
 <script setup>
+import { importSshConfig, importPutty } from '../lib/importers'
 import { ref, computed, onMounted } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { checkForUpdate, installUpdate } from '../lib/updater'
@@ -206,15 +207,6 @@ async function importVault() {
     const n = await api.backup_import({ path, passphrase: pass })
     await loadVault()
     toast(`Merged backup (${n} hosts)`)
-  } catch (e) {
-    err(e)
-  }
-}
-async function importConfig() {
-  try {
-    const n = await api.import_ssh_config()
-    await loadVault()
-    toast(`Imported ${n} host(s)`)
   } catch (e) {
     err(e)
   }
@@ -920,7 +912,25 @@ async function importConfig() {
                 <b>Import ~/.ssh/config</b>
                 <div class="dim">Hosts, users, ports, identity files and ProxyJump</div>
               </div>
-              <button class="btn" @click="importConfig"><Icon name="import" :size="14" /> Import</button>
+              <button class="btn" @click="importSshConfig"><Icon name="import" :size="14" /> Import</button>
+            </div>
+            <div class="set">
+              <div>
+                <b>Import PuTTY sessions</b>
+                <div class="dim">
+                  Host, port, user, key file and SSH jump host, into a "PuTTY" group. PuTTY doesn't save passwords.
+                  <template v-if="store.platform.os !== 'windows'">
+                    On Windows, export them with regedit (HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions) and
+                    import the .reg file here.
+                  </template>
+                </div>
+              </div>
+              <div class="row" style="gap: 6px">
+                <button v-if="store.platform.os === 'windows'" class="btn" @click="importPutty()">
+                  <Icon name="import" :size="14" /> Import
+                </button>
+                <button class="btn" @click="importPutty({ file: true })">.reg file…</button>
+              </div>
             </div>
             <div class="set">
               <div>

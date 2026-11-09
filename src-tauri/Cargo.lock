@@ -3060,6 +3060,7 @@ dependencies = [
  "tokio-util",
  "uuid",
  "webpki-roots",
+ "winreg 0.56.0",
 ]
 
 [[package]]
