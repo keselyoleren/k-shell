@@ -1,4 +1,4 @@
-//! End-to-end tests against real servers (SSH + jump host, FTP, an S3-compatible server).
+//! End-to-end tests against real servers (SSH + jump host, FTP, an S3-compatible server, Telnet).
 //!
 //! They are `#[ignore]`d by default. Start the servers and run them with:
 //!
@@ -13,7 +13,7 @@ use kshell_lib::{
     fs::Progress,
     keys,
     ssh::Pool,
-    terminal::{Cmd, LocalOptions, ShellOptions, Terminals},
+    terminal::{Cmd, LocalOptions, ShellOptions, TelnetOptions, Terminals},
     vault::*,
 };
 use std::sync::{Arc, Mutex};
@@ -478,6 +478,35 @@ async fn end_to_end() {
         "missing folder is an error",
         match terms.open_local("l3".into(), opts(Some("/no/such/dir".into()), ""), ch) {
             Err(e) if e.contains("Folder not found") => Ok(()),
+            other => Err(format!("{other:?}")),
+        }
+    );
+
+    println!("Telnet");
+    let (ch, buf, ev) = capture();
+    let topts = TelnetOptions { host: "127.0.0.1".into(), port: 2323, cols: 100, rows: 30, log: None };
+    check!("connect", terms.open_telnet("tn1".into(), topts, ch).await);
+    terms.send("tn1", Cmd::Write(b"echo telnet-$((40+2))\r".to_vec())).unwrap();
+    check!("command runs (CR NUL line ending)", wait_for(&buf, "telnet-42", 10).await);
+    terms.send("tn1", Cmd::Write(b"stty size\r".to_vec())).unwrap();
+    check!("window size sent (NAWS) 30x100", wait_for(&buf, "30 100", 10).await);
+    terms.send("tn1", Cmd::Resize(120, 40)).unwrap();
+    terms.send("tn1", Cmd::Write(b"stty size\r".to_vec())).unwrap();
+    check!("resize -> 40x120", wait_for(&buf, "40 120", 10).await);
+    terms.send("tn1", Cmd::Write(b"exit\r".to_vec())).unwrap();
+    for _ in 0..100 {
+        if !ev.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await
+    }
+    check!("exit event", ev.lock().unwrap().first().cloned().ok_or("no exit event".to_string()));
+    let (ch, _, _) = capture();
+    let closed = TelnetOptions { host: "127.0.0.1".into(), port: 1, cols: 80, rows: 24, log: None };
+    check!(
+        "refused connection is an error",
+        match terms.open_telnet("tn2".into(), closed, ch).await {
+            Err(e) if e.starts_with("Couldn't connect to 127.0.0.1:1") => Ok(()),
             other => Err(format!("{other:?}")),
         }
     );

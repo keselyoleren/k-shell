@@ -43,12 +43,17 @@ const entries = await api.fs_list({ id, path: '/var/log' })
 | `backup_export` | `path, passphrase` | – |
 | `backup_import` | `path, passphrase` | number of hosts in the backup (merged) |
 
-## Terminals and SSH: `commands/terminal.rs`
+## Terminals, SSH, Telnet and serial: `commands/terminal.rs`
 
 | Command | Arguments | Returns |
 |---|---|---|
 | `term_open_ssh` | `id, host, cols, rows, onData: Channel` | – |
 | `term_open_local` | `id, cols, rows, shell?: string, cwd?: string, startupCommand?: string, onData: Channel` | – (error if `cwd` doesn't exist; `~` is expanded) |
+| `term_open_telnet` | `id, host, cols, rows, onData: Channel` | – (address and port from `host`; window size sent with NAWS) |
+| `term_open_serial` | `id, host, onData: Channel` | – (`host.host` is the device; `baud_rate`, `data_bits`, `parity`, `stop_bits`, `flow_control` from the host) |
+| `serial_ports` | – | `[{ name, description }]` |
+| `telnet_test` | `host` | `"Connected in N ms"` |
+| `serial_test` | `host` | `"<port> opened"` |
 | `term_write` | `id, data: string` | – |
 | `term_resize` | `id, cols, rows` | – |
 | `term_close` | `id` | – |

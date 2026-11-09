@@ -18,6 +18,7 @@ pub mod sessionlog;
 pub mod ssh;
 pub mod ssh_config;
 pub mod state;
+pub mod telnet;
 pub mod terminal;
 pub mod vault;
 
@@ -103,6 +104,11 @@ pub fn run() {
             // terminals & ssh
             term::term_open_ssh,
             term::term_open_local,
+            term::term_open_telnet,
+            term::term_open_serial,
+            term::serial_ports,
+            term::telnet_test,
+            term::serial_test,
             term::term_write,
             term::log_dir,
             term::log_dir_open,

@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { store, connectHost, openSftp, openMenu, confirm, toast, err, loadVault } from '../lib/store'
 import { api } from '../lib/api'
-import { isObjectStorage } from '../lib/os'
+import { isObjectStorage, opensTerminal } from '../lib/os'
 import HostBadge from '../components/HostBadge.vue'
 import { importItems } from '../lib/importers'
 import Icon from '../components/Icon.vue'
@@ -44,10 +44,15 @@ const recent = computed(() =>
     .slice(0, 6),
 )
 
+const PARITY = { odd: 'O', even: 'E' }
 const sub = (h) =>
-  isObjectStorage(h.protocol)
-    ? `${{ s3: 's3', azblob: 'azure', gcs: 'gcs' }[h.protocol]} · ${h.bucket || h.endpoint || (h.protocol === 's3' ? 'AWS' : '')}`
-    : `${h.protocol !== 'ssh' ? h.protocol + ' · ' : ''}${h.username ? h.username + '@' : ''}${h.host}${h.port && h.port !== 22 && h.port !== 21 ? ':' + h.port : ''}`
+  h.protocol === 'serial'
+    ? `serial · ${h.host} · ${h.baud_rate || 9600} ${h.data_bits || 8}${PARITY[h.parity] || 'N'}${h.stop_bits || 1}`
+    : h.protocol === 'telnet'
+      ? `telnet · ${h.host}${h.port && h.port !== 23 ? ':' + h.port : ''}`
+      : isObjectStorage(h.protocol)
+        ? `${{ s3: 's3', azblob: 'azure', gcs: 'gcs' }[h.protocol]} · ${h.bucket || h.endpoint || (h.protocol === 's3' ? 'AWS' : '')}`
+        : `${h.protocol !== 'ssh' ? h.protocol + ' · ' : ''}${h.username ? h.username + '@' : ''}${h.host}${h.port && h.port !== 22 && h.port !== 21 ? ':' + h.port : ''}`
 
 function edit(h) {
   store.editor = { host: h ? JSON.parse(JSON.stringify(h)) : null }
@@ -88,8 +93,9 @@ async function test(h) {
 
 function menu(e, h) {
   const ssh = h.protocol === 'ssh'
+  const terminal = opensTerminal(h.protocol)
   openMenu(e, [
-    { label: ssh ? 'Connect' : 'Open', icon: ssh ? 'terminal' : 'folder', action: () => connectHost(h) },
+    { label: terminal ? 'Connect' : 'Open', icon: terminal ? 'terminal' : 'folder', action: () => connectHost(h) },
     ...(ssh
       ? [
           { label: 'Open SFTP', icon: 'folder', action: () => openSftp(h) },
@@ -185,7 +191,7 @@ function menu(e, h) {
               </button>
               <button class="iconbtn" title="Edit" @click.stop="edit(h)"><Icon name="edit" /></button>
               <button class="iconbtn go" title="Connect" @click.stop="connectHost(h)">
-                <Icon :name="h.protocol === 'ssh' ? 'play' : 'right'" :size="14" />
+                <Icon :name="opensTerminal(h.protocol) ? 'play' : 'right'" :size="14" />
               </button>
             </div>
           </div>

@@ -12,6 +12,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   the private key file (`.ppk`, added to the keychain) and an SSH proxy as jump host come along, into a "PuTTY"
   group. PuTTY saves no passwords. Telnet, serial and other non-SSH sessions, and SOCKS/HTTP proxies, are listed as
   skipped. Use Hosts → Import or Settings → Vault.
+- The file manager shows an icon for each kind of file, in the colour of its language or type: code (Python, Rust,
+  Go, JavaScript, TypeScript and about 30 more), text and Markdown, PDF, spreadsheets, slides, images, video, audio,
+  archives, keys and certificates, lock files, databases, fonts, binaries, config files and shell scripts. Some
+  names are recognised on their own: `Dockerfile`, `docker-compose.yml`, `.gitignore`, `Makefile`, `package.json`,
+  `Cargo.toml`, `README`, `.env`, `id_ed25519`, `known_hosts`.
+- Telnet and serial console hosts, for switches, routers and boards that don't speak SSH. Telnet hosts take an
+  address and port (23 by default) and send the window size and terminal type to the server. Serial hosts take the
+  port (`/dev/ttyUSB0`, `/dev/cu.usbserial-…`, `COM3`; the editor lists the ones it finds), baud rate, data bits,
+  parity, stop bits and flow control. Both open as terminal tabs with splits, broadcast, snippets and session logs;
+  they don't reconnect by themselves, press Enter to reconnect.
 - Ten more terminal themes: Tomorrow Night, Material Darker, Iceberg, Oceanic Next, Cobalt2, Nightfox, Dayfox,
   Palenight, Zenburn and Horizon (35 in all).
 - Hosts show a logo: the detected OS for SSH hosts (Ubuntu, Debian, Fedora, Red Hat, Arch, Alpine, macOS, FreeBSD
