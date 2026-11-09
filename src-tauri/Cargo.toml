@@ -47,6 +47,7 @@ opendal = { version = "0.59", default-features = false, features = ["services-az
 tokio-util = { version = "0.7", features = ["compat"] }
 hmac = "0.12"
 sha2 = "0.10"
+serialport = { version = "4.10", default-features = false }
 
 [profile.release]
 codegen-units = 1

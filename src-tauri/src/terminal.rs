@@ -1,4 +1,4 @@
-//! Interactive terminals: remote SSH shells and local PTYs.
+//! Interactive terminals: remote SSH shells, local PTYs, Telnet and serial consoles.
 //! Output is coalesced and streamed to the webview as raw bytes over a
 //! Tauri IPC channel (no JSON/base64 overhead); status events go as JSON.
 
@@ -43,6 +43,67 @@ pub struct LocalOptions {
     pub startup_command: String,
     /// Plain-text copy of the output, when session logging is on.
     pub log: Option<crate::sessionlog::SessionLog>,
+}
+
+/// Parameters for a Telnet session.
+pub struct TelnetOptions {
+    pub host: String,
+    pub port: u16,
+    pub cols: u16,
+    pub rows: u16,
+    /// Plain-text copy of the output, when session logging is on.
+    pub log: Option<crate::sessionlog::SessionLog>,
+}
+
+/// Parameters for a serial console. Zero / empty values take the usual defaults
+/// (9600 baud, 8 data bits, no parity, 1 stop bit, no flow control).
+#[derive(Clone, Debug, Default)]
+pub struct SerialOptions {
+    /// Device: `/dev/ttyUSB0`, `/dev/cu.usbserial-…`, `COM3`.
+    pub path: String,
+    pub baud_rate: u32,
+    pub data_bits: u8,
+    /// none | odd | even
+    pub parity: String,
+    pub stop_bits: u8,
+    /// none | software (XON/XOFF) | hardware (RTS/CTS)
+    pub flow_control: String,
+}
+
+impl SerialOptions {
+    pub fn builder(&self) -> serialport::SerialPortBuilder {
+        use serialport::{DataBits, FlowControl, Parity, StopBits};
+        let baud = if self.baud_rate == 0 { 9600 } else { self.baud_rate };
+        serialport::new(self.path.trim(), baud)
+            .data_bits(match self.data_bits {
+                5 => DataBits::Five,
+                6 => DataBits::Six,
+                7 => DataBits::Seven,
+                _ => DataBits::Eight,
+            })
+            .parity(match self.parity.as_str() {
+                "odd" => Parity::Odd,
+                "even" => Parity::Even,
+                _ => Parity::None,
+            })
+            .stop_bits(if self.stop_bits == 2 { StopBits::Two } else { StopBits::One })
+            .flow_control(match self.flow_control.as_str() {
+                "software" => FlowControl::Software,
+                "hardware" => FlowControl::Hardware,
+                _ => FlowControl::None,
+            })
+    }
+
+    /// Open the port (reads time out quickly so the session can be closed).
+    pub fn open(&self) -> Res<Box<dyn serialport::SerialPort>> {
+        if self.path.trim().is_empty() {
+            return Err("No serial port chosen".into());
+        }
+        self.builder()
+            .timeout(std::time::Duration::from_millis(100))
+            .open()
+            .map_err(|e| format!("Couldn't open {}: {e}", self.path.trim()))
+    }
 }
 
 /// Resolve a project folder: expands a leading "~" and checks that it exists.
@@ -245,6 +306,136 @@ impl Terminals {
             let code = child.wait().ok().map(|s| s.exit_code());
             me.map.lock().remove(&id);
             send_event(&out, json!({"type": "exit", "code": code}));
+        });
+        Ok(())
+    }
+}
+
+impl Terminals {
+    /// Connect to a Telnet server and start streaming it to `out`.
+    pub async fn open_telnet(
+        self: &Arc<Self>,
+        id: String,
+        opts: TelnetOptions,
+        out: Channel<InvokeResponseBody>,
+    ) -> Res<()> {
+        use crate::telnet::Telnet;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let TelnetOptions { host, port, cols, rows, mut log } = opts;
+        let target = format!("{host}:{port}");
+        let stream = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::net::TcpStream::connect((host.as_str(), port)),
+        )
+        .await
+        .map_err(|_| format!("Timed out connecting to {target}"))?
+        .map_err(|e| format!("Couldn't connect to {target}: {e}"))?;
+        let _ = stream.set_nodelay(true);
+        let (mut rd, mut wr) = stream.into_split();
+
+        let (tx, mut rx) = unbounded_channel::<Cmd>();
+        self.map.lock().insert(id.clone(), tx);
+        let me = self.clone();
+        tokio::spawn(async move {
+            let mut tn = Telnet::new(cols, rows);
+            let mut buf = vec![0u8; 64 * 1024];
+            let (mut text, mut reply) = (Vec::new(), Vec::new());
+            loop {
+                tokio::select! {
+                    n = rd.read(&mut buf) => match n {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            tn.receive(&buf[..n], &mut text, &mut reply);
+                            if !reply.is_empty() {
+                                if wr.write_all(&reply).await.is_err() { break }
+                                reply.clear();
+                            }
+                            if let Some(l) = log.as_mut() { l.write(&text) }
+                            send_raw(&out, &mut text);
+                        }
+                    },
+                    cmd = rx.recv() => match cmd {
+                        Some(Cmd::Write(d)) => { if wr.write_all(&Telnet::encode(&d)).await.is_err() { break } }
+                        Some(Cmd::Resize(c, r)) => {
+                            if let Some(frame) = tn.resize(c, r) { let _ = wr.write_all(&frame).await; }
+                        }
+                        Some(Cmd::Close) | None => { let _ = wr.shutdown().await; break }
+                    }
+                }
+            }
+            me.map.lock().remove(&id);
+            send_event(&out, json!({"type": "exit", "code": null}));
+        });
+        Ok(())
+    }
+
+    /// Open a serial port and start streaming it to `out`.
+    pub fn open_serial(
+        self: &Arc<Self>,
+        id: String,
+        opts: SerialOptions,
+        mut log: Option<crate::sessionlog::SessionLog>,
+        out: Channel<InvokeResponseBody>,
+    ) -> Res<()> {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let mut writer = opts.open()?;
+        let mut reader =
+            writer.try_clone().map_err(|e| format!("Couldn't open {}: {e}", opts.path.trim()))?;
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let (tx, mut rx) = unbounded_channel::<Cmd>();
+        self.map.lock().insert(id.clone(), tx.clone());
+
+        let out2 = out.clone();
+        let stop2 = stop.clone();
+        std::thread::spawn(move || {
+            // The port went away (unplugged…): tell the control thread.
+            let _guard = scopeguard(move || {
+                let _ = tx.send(Cmd::Close);
+            });
+            let mut buf = vec![0u8; 16 * 1024];
+            while !stop2.load(Ordering::Relaxed) {
+                match reader.read(&mut buf) {
+                    Ok(0) => {}
+                    Ok(n) => {
+                        if let Some(l) = log.as_mut() {
+                            l.write(&buf[..n]);
+                        }
+                        let _ = out2.send(InvokeResponseBody::Raw(buf[..n].to_vec()));
+                    }
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted
+                        ) => {}
+                    Err(e) => {
+                        if !stop2.load(Ordering::Relaxed) {
+                            let msg = format!("\r\n\x1b[31m✖ serial port: {e}\x1b[0m\r\n");
+                            let _ = out2.send(InvokeResponseBody::Raw(msg.into_bytes()));
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+
+        let me = self.clone();
+        std::thread::spawn(move || {
+            while let Some(cmd) = rx.blocking_recv() {
+                match cmd {
+                    Cmd::Write(d) => {
+                        if writer.write_all(&d).is_err() {
+                            break;
+                        }
+                        let _ = writer.flush();
+                    }
+                    Cmd::Resize(..) => {} // a serial line has no window size
+                    Cmd::Close => break,
+                }
+            }
+            stop.store(true, Ordering::Relaxed);
+            me.map.lock().remove(&id);
+            send_event(&out, json!({"type": "exit", "code": null}));
         });
         Ok(())
     }
