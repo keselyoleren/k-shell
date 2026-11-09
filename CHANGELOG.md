@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Ten more terminal themes: Tomorrow Night, Material Darker, Iceberg, Oceanic Next, Cobalt2, Nightfox, Dayfox,
+  Palenight, Zenburn and Horizon (35 in all).
 - Resume interrupted transfers between this computer and an SFTP server. When the destination already holds part
   of a file, the file manager asks to Resume, Overwrite or Skip. Resume continues from the bytes already there and
   checks the final size. For a folder that already exists, Resume skips files that are complete and continues the
