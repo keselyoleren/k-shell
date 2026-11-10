@@ -99,6 +99,14 @@ async fn end_to_end() {
     let again = check!("pool reuses connection", pool.get(&vault, &ssh).await);
     assert!(Arc::ptr_eq(&conn, &again));
 
+    // server stats panel: the script runs and parses on a real Linux server
+    let (out, _) = check!("server stats", conn.exec(&kshell_lib::stats::command()).await);
+    let st = kshell_lib::stats::parse(&out);
+    assert_eq!(st.os, "Linux", "{out}");
+    assert!(st.cpu_ticks.is_some() && st.mem_total.is_some() && st.uptime_secs.is_some(), "{st:?}\n{out}");
+    assert!(st.disks.iter().any(|d| d.mount == "/"), "{st:?}\n{out}");
+    assert!(!st.hostname.is_empty() && !st.kernel.is_empty() && st.net.is_some(), "{st:?}\n{out}");
+
     // tamper the stored fingerprint -> must be rejected
     vault.data.write().known_hosts[0].fingerprint = "SHA256:bogus".into();
     let r = Pool::default().fresh(&vault, &ssh).await;

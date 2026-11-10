@@ -18,6 +18,7 @@ import {
   toggleSidebar,
   toggleBroadcast,
   renameTab,
+  panes,
 } from './store'
 import { zoomBy, zoomReset } from './appearance'
 
@@ -165,6 +166,15 @@ export const ACTIONS = [
     mac: ['Alt+Meta+I'],
     pc: ['Ctrl+Shift+I'],
     run: () => toggleBroadcast(),
+  },
+  {
+    id: 'server_stats',
+    group: 'Panes',
+    label: 'Show / hide server stats',
+    run: () => {
+      const t = activeTab()
+      if (t?.kind === 'term') panes.get(t.focus)?.toggleStats()
+    },
   },
 
   { id: 'copy', group: 'Terminal', label: 'Copy selection', scope: 'terminal', mac: ['Meta+C'], pc: ['Ctrl+Shift+C'] },

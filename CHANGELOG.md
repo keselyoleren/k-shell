@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Server stats panel for SSH terminals. It shows the hostname, OS release and kernel, uptime and process count;
+  CPU usage with a history graph, split into user, system and iowait, and the load average against the core count;
+  memory with a history graph and a used / cache / free bar, plus swap; network download and upload speed with a
+  graph; disk usage and free space per mount; and the five busiest processes by CPU. Values turn yellow above 75%
+  and red above 90%. It refreshes every few seconds over the terminal's own SSH connection, with nothing installed on
+  the server: Linux is read from `/proc`, macOS and the BSDs from `sysctl`, `vm_stat`, `netstat` and `ps`. Open it
+  from the pane toolbar, the pane menu or the command palette ("Show / hide server stats", no default shortcut). It
+  only refreshes while the tab is visible, stays open when tabs are reopened on launch, and the interval is set in
+  Settings → Terminal.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added

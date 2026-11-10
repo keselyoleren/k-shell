@@ -18,6 +18,7 @@ pub mod sessionlog;
 pub mod ssh;
 pub mod ssh_config;
 pub mod state;
+pub mod stats;
 pub mod telnet;
 pub mod terminal;
 pub mod vault;
@@ -117,6 +118,7 @@ pub fn run() {
             term::ssh_exec,
             term::ssh_test,
             term::host_detect_os,
+            term::host_stats,
             term::key_install,
             // files
             files::fs_open,

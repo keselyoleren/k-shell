@@ -355,6 +355,7 @@ function snapNode(n) {
   if (n.type === 'split') return { type: 'split', dir: n.dir, ratio: n.ratio, children: n.children.map(snapNode) }
   const t = n.target
   const last = n.cwd ? { cwd: n.cwd } : {} // last folder the shell reported
+  if (n.stats) last.stats = true // server stats panel open
   if (t.kind === 'local') {
     const { cwd, startup_command, title, workspace } = t
     return { type: 'leaf', ...last, target: { kind: 'local', cwd, startup_command, title, workspace } }
@@ -382,6 +383,7 @@ function buildNode(n) {
   const h = n.target?.kind === 'local' ? null : hostOf(n.target?.host)
   const l = n.target?.kind === 'local' ? leaf({ ...n.target }) : h ? leaf({ kind: 'ssh', host: { ...h } }) : null
   if (l && n.cwd) l.cwd = n.cwd
+  if (l && n.stats) l.stats = true
   return l
 }
 
