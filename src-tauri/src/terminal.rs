@@ -248,6 +248,7 @@ impl Terminals {
             }
             None => {
                 let shell = shell.filter(|s| !s.is_empty()).unwrap_or_else(default_shell);
+                #[cfg_attr(not(unix), allow(unused_mut))] // only Unix adds -l
                 let mut cmd = CommandBuilder::new(&shell);
                 #[cfg(unix)]
                 if shell.ends_with("sh") {
