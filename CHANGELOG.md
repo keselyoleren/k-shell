@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Record a terminal pane to an asciinema file (`.cast`, asciicast v2) that plays in `asciinema play`, on
+  asciinema.org or through agg for a GIF. Start and stop from the pane menu or the command palette ("Start / stop
+  recording", no default shortcut); a red REC badge with the elapsed time shows while it runs and stops it when
+  clicked. Output and window resizes are recorded, typed input is not, so passwords typed at a prompt stay out of the
+  file. Recordings are saved in the session-log folder; when one stops, a notice offers to play it or show it in the
+  folder. Works for SSH, local, Telnet and serial terminals.
+- A player for `.cast` files (asciicast v1, v2 and v3) in its own tab: play / pause, seek, speed from 0.5× to 4×,
+  and "Skip pauses" to shorten pauses longer than 2 seconds. Open one with "Play a recording…" in the command
+  palette. Keys: Space play / pause, ← / → 5 seconds, Home / End, < / > speed.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added

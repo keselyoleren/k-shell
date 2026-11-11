@@ -8,6 +8,7 @@
 //! * `forward`   — -L / -R / -D port forwarding
 //! * `keys`, `ssh_config` — key generation/import, `~/.ssh/config` import
 
+pub mod cast;
 pub mod commands;
 pub mod error;
 pub mod forward;
@@ -117,6 +118,11 @@ pub fn run() {
             term::ssh_exec,
             term::ssh_test,
             term::host_detect_os,
+            term::rec_start,
+            term::rec_write,
+            term::rec_stop,
+            term::rec_reveal,
+            term::cast_read,
             term::key_install,
             // files
             files::fs_open,

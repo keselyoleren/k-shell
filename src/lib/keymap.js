@@ -18,7 +18,12 @@ import {
   toggleSidebar,
   toggleBroadcast,
   renameTab,
+  panes,
+  openCast,
+  err,
 } from './store'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { api } from './api'
 import { zoomBy, zoomReset } from './appearance'
 
 const isMac = () => store.platform.os === 'macos'
@@ -37,6 +42,19 @@ function cyclePane(d) {
   walk(tab.root)
   const i = Math.max(0, leaves.indexOf(tab.focus))
   tab.focus = leaves[(i + d + leaves.length) % leaves.length]
+}
+/** Pick a .cast file (starting in the session-log folder, where recordings are saved) and play it. */
+async function playRecording() {
+  try {
+    const path = await openDialog({
+      title: 'Play a recording',
+      defaultPath: await api.log_dir().catch(() => undefined),
+      filters: [{ name: 'Terminal recordings', extensions: ['cast'] }],
+    })
+    if (typeof path === 'string') openCast(path)
+  } catch (e) {
+    err(e)
+  }
 }
 const showVault = (view) => {
   store.active = 'vault'
@@ -178,6 +196,16 @@ export const ACTIONS = [
     pc: ['Ctrl+Shift+F'],
   },
   { id: 'clear', group: 'Terminal', label: 'Clear terminal', scope: 'terminal' },
+  {
+    id: 'record',
+    group: 'Terminal',
+    label: 'Start / stop recording',
+    run: () => {
+      const t = activeTab()
+      if (t?.kind === 'term') panes.get(t.focus)?.toggleRecording()
+    },
+  },
+  { id: 'play_recording', group: 'Terminal', label: 'Play a recording…', run: playRecording },
   {
     id: 'accept_suggestion',
     group: 'Terminal',

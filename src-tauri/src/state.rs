@@ -23,6 +23,8 @@ pub struct AppState {
     pub forwards: Forwards,
     /// Remote files opened in another app, watched for saves (see `fs_open_external`).
     pub watches: Mutex<HashMap<String, Watch>>,
+    /// Terminal recordings in progress (`.cast` files).
+    pub recordings: crate::cast::Recordings,
 }
 
 /// A downloaded copy of a remote file, kept so a save in another app can be uploaded back.
@@ -43,6 +45,7 @@ impl AppState {
             transfers: Mutex::new(HashMap::new()),
             forwards: Forwards::default(),
             watches: Mutex::new(HashMap::new()),
+            recordings: Default::default(),
         }
     }
 

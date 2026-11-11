@@ -152,6 +152,39 @@ pub fn log_dir_open(app: tauri::AppHandle, st: State) -> Res<()> {
     app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
+/// Start recording a terminal pane to a `.cast` file in the session-log folder; returns its path.
+#[tauri::command]
+pub fn rec_start(st: State, id: String, label: String, cols: u16, rows: u16) -> Res<String> {
+    let dir = crate::sessionlog::dir_from_setting(&st.vault.data.read().settings.log_dir);
+    let rec = crate::cast::Recording::create(&dir, &label, cols, rows)?;
+    Ok(st.recordings.start(id, rec))
+}
+
+/// Append a batch of `[seconds, "o" | "r", data]` events to a recording.
+#[tauri::command]
+pub fn rec_write(st: State, id: String, events: Vec<crate::cast::Event>) -> Res<()> {
+    st.recordings.write(&id, &events)
+}
+
+/// Write the last events and close the recording; returns its path.
+#[tauri::command]
+pub fn rec_stop(st: State, id: String, events: Vec<crate::cast::Event>) -> Res<String> {
+    st.recordings.stop(&id, &events)
+}
+
+/// Show a recording in the OS file manager.
+#[tauri::command]
+pub fn rec_reveal(app: tauri::AppHandle, path: String) -> Res<()> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().reveal_item_in_dir(&path).map_err(|e| e.to_string())
+}
+
+/// Read a `.cast` file for the player.
+#[tauri::command]
+pub fn cast_read(path: String) -> Res<String> {
+    crate::cast::read(&path)
+}
+
 #[tauri::command]
 pub fn term_write(st: State, id: String, data: String) -> Res<()> {
     st.terminals.send(&id, Cmd::Write(data.into_bytes()))

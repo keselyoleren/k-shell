@@ -22,6 +22,9 @@ import {
   toggleBroadcast,
   broadcastPeers,
   confirm,
+  toast,
+  err,
+  openCast,
 } from '../lib/store'
 import { termTheme } from '../lib/appearance'
 import { actionFor, withHint } from '../lib/keymap'
@@ -30,6 +33,7 @@ import { resolveSnippet } from '../lib/snippetvars'
 import { createHighlighter } from '../lib/highlight'
 import { joinMultipartImages } from '../lib/iipmultipart'
 import { LineTracker, suggestFor, firstWord, cursorContext } from '../lib/suggest'
+import { Recorder, fmtClock } from '../lib/cast'
 import Icon from './Icon.vue'
 
 const props = defineProps({ leaf: Object, tab: Object, visible: Boolean, split: Boolean })
@@ -193,7 +197,7 @@ function cancelPrompt() {
   clearTimeout(inj.max)
   const chunks = inj.phase === 'hide' ? inj.chunks : []
   inj = null
-  for (const c of chunks) term.write(c)
+  for (const c of chunks) put(c)
 }
 function armPrompt(id, plan) {
   inj = {
@@ -222,10 +226,15 @@ function indexOfBytes(hay, needle) {
   }
   return -1
 }
+/** Show output from the session (and record it when a recording is running). */
+function put(b) {
+  term.write(b)
+  rec?.out(b)
+}
 function output(b) {
-  if (!inj) return term.write(b)
+  if (!inj) return put(b)
   if (inj.phase === 'wait') {
-    term.write(b)
+    put(b)
     inj.seen = true
     clearTimeout(inj.quiet)
     const id = inj.id
@@ -240,9 +249,49 @@ function output(b) {
   if (i < 0) return
   clearTimeout(inj.max)
   inj = null
-  term.write('\r\x1b[2K')
-  term.write(all.subarray(i + MARK.length))
+  put('\r\x1b[2K')
+  put(all.subarray(i + MARK.length))
 }
+
+// ---------- recording (.cast) ----------
+// What the pane shows is recorded, never what is typed: passwords typed at a prompt stay out.
+let rec = null
+const recording = ref(null) // { since } while recording
+const recClock = ref('0:00')
+let recTimer = 0
+async function startRecording() {
+  if (rec || !term) return
+  const r = new Recorder()
+  rec = r
+  try {
+    await r.start({ label: title.value, cols: term.cols, rows: term.rows })
+  } catch (e) {
+    rec = null
+    return err(e)
+  }
+  recording.value = { since: Date.now() }
+  recClock.value = '0:00'
+  recTimer = setInterval(() => (recClock.value = fmtClock(r.elapsed())), 1000)
+}
+async function stopRecording({ quiet = false } = {}) {
+  const r = rec
+  if (!r) return
+  rec = null
+  recording.value = null
+  clearInterval(recTimer)
+  try {
+    const path = await r.stop()
+    if (quiet) return
+    if (r.failed) err(`Part of the recording couldn't be written: ${r.failed}`)
+    toast(`Recording saved: ${path}`, 'info', 10000, [
+      { label: 'Play', run: () => openCast(path) },
+      { label: 'Show in folder', run: () => api.rec_reveal({ path }).catch(err) },
+    ])
+  } catch (e) {
+    if (!quiet) err(e)
+  }
+}
+const toggleRecording = () => (rec ? stopRecording() : startRecording())
 
 async function connect() {
   const id = uid()
@@ -578,6 +627,11 @@ function menu(e) {
     { label: 'Paste', icon: 'download', action: paste },
     { label: 'Clear', icon: 'x', action: () => term.clear() },
     { label: 'Find…', icon: 'search', action: openSearch },
+    {
+      label: recording.value ? 'Stop recording' : 'Start recording',
+      icon: recording.value ? 'stop' : 'record',
+      action: toggleRecording,
+    },
     '-',
     { label: 'Split right', icon: 'splitH', action: () => splitFocused('row') },
     { label: 'Split down', icon: 'splitV', action: () => splitFocused('col') },
@@ -674,6 +728,7 @@ onMounted(async () => {
   term.onCursorMove(refreshGhost)
   term.onScroll(refreshGhost)
   term.onResize(refreshGhost)
+  term.onResize(({ cols, rows }) => rec?.resize(cols, rows))
   term.onBell(bell)
   // OSC 7 (file://host/path): the shell's working directory, from our hook or the shell itself
   term.parser.registerOscHandler(7, (data) => {
@@ -746,6 +801,7 @@ onMounted(async () => {
       write(d)
     },
     focus: () => term.focus(),
+    toggleRecording,
     term,
   })
   ro = new ResizeObserver(scheduleFit)
@@ -793,6 +849,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  stopRecording({ quiet: true }) // a closed pane keeps what was recorded
   cancelPrompt()
   cancelAnimationFrame(ghostRaf)
   ro?.disconnect()
@@ -827,6 +884,9 @@ onBeforeUnmount(() => {
     >
       <span class="st" :class="reconnecting ? 'connecting' : status"></span>
       <span class="t">{{ title }}</span>
+      <button v-if="recording" class="recbadge" @click.stop="stopRecording()" title="Stop recording">
+        <i></i>REC {{ recClock }}
+      </button>
       <button
         v-if="tab.broadcast"
         class="iconbtn bc"
@@ -896,6 +956,14 @@ onBeforeUnmount(() => {
     >
       <span v-for="(c, i) in ghost.text" :key="i" :style="{ width: ghost.cw + 'px' }">{{ c }}</span>
     </div>
+    <button
+      v-if="recording && !split"
+      class="recbadge float"
+      @click="stopRecording()"
+      :title="withHint('Stop recording', 'record')"
+    >
+      <i></i>REC {{ recClock }}
+    </button>
     <div v-if="status === 'connecting' && target.kind === 'ssh'" class="loading"><span class="spin"></span></div>
   </div>
 </template>
@@ -980,6 +1048,40 @@ onBeforeUnmount(() => {
 .st.closed,
 .st.error {
   background: var(--danger);
+}
+.recbadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: var(--danger);
+  cursor: pointer;
+}
+.recbadge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  animation: blink 1.2s step-end infinite;
+}
+.recbadge.float {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  z-index: 3;
+  opacity: 0.9;
+}
+@keyframes blink {
+  50% {
+    opacity: 0.2;
+  }
 }
 .tools {
   position: absolute;
