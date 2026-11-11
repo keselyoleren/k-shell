@@ -8,6 +8,7 @@
 //!
 //! [`AppState`]: crate::state::AppState
 
+pub mod containers;
 pub mod files;
 pub mod forwards;
 pub mod system;

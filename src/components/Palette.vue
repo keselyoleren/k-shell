@@ -1,7 +1,16 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import { resolveSnippet } from '../lib/snippetvars'
-import { store, connectHost, openLocal, openSftp, sendToFocused, openProject, openWorkspace } from '../lib/store'
+import {
+  store,
+  connectHost,
+  openLocal,
+  openSftp,
+  sendToFocused,
+  openProject,
+  openWorkspace,
+  openContainers,
+} from '../lib/store'
 import { uid } from '../lib/api'
 import Icon from './Icon.vue'
 import { isObjectStorage } from '../lib/os'
@@ -65,6 +74,15 @@ const items = computed(() => {
     out.push({ icon: 'terminal', label: 'New local terminal', sub: '', keys: hint('new_local'), run: openLocal })
   if (!s || 'file manager sftp'.includes(s))
     out.push({ icon: 'folder', label: 'Open file manager', sub: '', keys: hint('new_sftp'), run: () => openSftp() })
+  if (!s || 'docker containers'.includes(s))
+    out.push({
+      icon: 'cube',
+      label: 'Docker containers',
+      sub: 'This computer',
+      run: () => openContainers(null, 'docker'),
+    })
+  if (!s || 'kubernetes pods kubectl k8s'.includes(s))
+    out.push({ icon: 'cube', label: 'Kubernetes pods', sub: 'This computer', run: () => openContainers(null, 'kube') })
   // app commands, e.g. "split", "zoom", "settings"
   if (s)
     for (const a of ACTIONS) {

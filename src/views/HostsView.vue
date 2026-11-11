@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { store, connectHost, openSftp, openMenu, confirm, toast, err, loadVault } from '../lib/store'
+import { store, connectHost, openSftp, openMenu, openContainers, confirm, toast, err, loadVault } from '../lib/store'
 import { api } from '../lib/api'
 import { isObjectStorage, opensTerminal } from '../lib/os'
 import HostBadge from '../components/HostBadge.vue'
@@ -99,6 +99,8 @@ function menu(e, h) {
     ...(ssh
       ? [
           { label: 'Open SFTP', icon: 'folder', action: () => openSftp(h) },
+          { label: 'Docker containers…', icon: 'cube', action: () => openContainers(h, 'docker') },
+          { label: 'Kubernetes pods…', icon: 'cube', action: () => openContainers(h, 'kube') },
           { label: 'Test connection', icon: 'zap', action: () => test(h) },
           {
             label: 'Port forwarding…',

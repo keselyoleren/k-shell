@@ -19,6 +19,7 @@ const SftpTab = lazy(() => import('./components/SftpTab.vue'))
 const CastPlayer = lazy(() => import('./components/CastPlayer.vue'))
 const HostEditor = lazy(() => import('./components/HostEditor.vue'))
 const Palette = lazy(() => import('./components/Palette.vue'))
+const ContainersTab = lazy(() => import('./components/ContainersTab.vue'))
 
 const views = {
   hosts: HostsView,
@@ -77,6 +78,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
         <template v-for="t in store.tabs" :key="t.id">
           <div v-if="t.kind !== 'term'" class="pane-wrap" v-show="store.active === t.id">
             <CastPlayer v-if="t.kind === 'cast'" :tab="t" :visible="store.active === t.id" />
+            <ContainersTab v-else-if="t.kind === 'containers'" :tab="t" :visible="store.active === t.id" />
             <SftpTab v-else :tab="t" />
           </div>
         </template>

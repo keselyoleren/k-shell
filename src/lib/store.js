@@ -116,6 +116,49 @@ export function openWorkspace(ws) {
   return tabs
 }
 
+/** Title of a terminal target: a container's or project's own title, else the host's name. */
+export function targetTitle(t) {
+  if (t.container || t.kind === 'local') return t.title || 'Local'
+  return t.host.label || t.host.host
+}
+
+const containersTitle = (host) => (host ? `Containers · ${host.label || host.host}` : 'Containers')
+
+/**
+ * Show the Docker containers / Kubernetes pods of a host (null: this computer) in a tab; an open
+ * tab for the same place is reused. engine: 'docker' | 'kube'
+ */
+export function openContainers(host = null, engine = 'docker') {
+  const key = host?.id || ''
+  let tab = store.tabs.find((t) => t.kind === 'containers' && (t.host?.id || '') === key)
+  if (!tab) {
+    tab = {
+      id: uid(),
+      kind: 'containers',
+      title: containersTitle(host),
+      host: host ? { ...host } : null,
+      color: host?.color || '',
+    }
+    store.tabs.push(tab)
+  }
+  tab.engine = engine
+  store.active = tab.id
+  return tab
+}
+
+/**
+ * Open a shell in a container as a terminal tab: a local terminal running docker/kubectl here, or
+ * an SSH terminal running it on the host. shell: { engine: 'docker', id } or
+ * { engine: 'kube', context, namespace, pod, container }.
+ */
+export function openContainerShell(host, shell, name) {
+  const title = host ? `${name} · ${host.label || host.host}` : name
+  const target = host
+    ? { kind: 'ssh', host: { ...host }, container: shell, title }
+    : { kind: 'local', container: shell, title }
+  return openTerminal(target, title)
+}
+
 export function connectHost(host) {
   if (host.protocol === 'ftp' || host.protocol === 'ftps' || isObjectStorage(host.protocol)) return openSftp(host)
   return openTerminal({ kind: 'ssh', host: { ...host } }, host.label || host.host)
@@ -282,7 +325,7 @@ export function detachPane(tab, paneId) {
   const nt = {
     id: uid(),
     kind: 'term',
-    title: t.kind === 'local' ? t.title || 'Local' : t.host.label || t.host.host,
+    title: targetTitle(t),
     root: moved,
     focus: moved.id,
     color: t.host?.color || tab.color || '',
@@ -352,13 +395,14 @@ export function setTabName(tab, name) {
 }
 function autoTitle(tab) {
   if (tab.kind === 'sftp') return tab.host ? tab.host.label || tab.host.host : 'File Manager'
+  if (tab.kind === 'containers') return containersTitle(tab.host)
   if (tab.kind === 'cast')
     return tab.path
       .split(/[\\/]/)
       .pop()
       .replace(/\.cast$/i, '')
   const t = firstLeaf(tab.root).target
-  return t.kind === 'local' ? t.title || 'Local' : t.host.label || t.host.host
+  return targetTitle(t)
 }
 
 // ---------- session: reopen the tabs of the last run ----------
@@ -375,10 +419,11 @@ function snapNode(n) {
   const last = n.cwd ? { cwd: n.cwd } : {} // last folder the shell reported
   if (n.stats) last.stats = true // server stats panel open
   if (t.kind === 'local') {
-    const { cwd, startup_command, title, workspace } = t
-    return { type: 'leaf', ...last, target: { kind: 'local', cwd, startup_command, title, workspace } }
+    const { cwd, startup_command, title, workspace, container } = t
+    return { type: 'leaf', ...last, target: { kind: 'local', cwd, startup_command, title, workspace, container } }
   }
-  return { type: 'leaf', ...last, target: { kind: 'ssh', host: hostRef(t.host) } }
+  const ct = t.container ? { container: t.container, title: t.title } : {}
+  return { type: 'leaf', ...last, target: { kind: 'ssh', host: hostRef(t.host), ...ct } }
 }
 function snapshot() {
   if (!store.vault.settings.restore_tabs) return null
@@ -390,7 +435,11 @@ function snapshot() {
       title: t.title,
       renamed: !!t.renamed,
       color: t.color,
-      ...(t.kind === 'sftp' ? { host: hostRef(t.host) } : { root: snapNode(t.root) }),
+      ...(t.kind === 'sftp'
+        ? { host: hostRef(t.host) }
+        : t.kind === 'containers'
+          ? { host: hostRef(t.host), engine: t.engine }
+          : { root: snapNode(t.root) }),
     }))
   return { tabs, active: store.tabs.findIndex((t) => t.id === store.active) }
 }
@@ -402,7 +451,8 @@ function buildNode(n) {
     return { type: 'split', id: uid(), dir: n.dir, ratio: n.ratio || 0.5, children: kids }
   }
   const h = n.target?.kind === 'local' ? null : hostOf(n.target?.host)
-  const l = n.target?.kind === 'local' ? leaf({ ...n.target }) : h ? leaf({ kind: 'ssh', host: { ...h } }) : null
+  const ct = n.target?.container ? { container: n.target.container, title: n.target.title } : {}
+  const l = n.target?.kind === 'local' ? leaf({ ...n.target }) : h ? leaf({ kind: 'ssh', host: { ...h }, ...ct }) : null
   if (l && n.cwd) l.cwd = n.cwd
   if (l && n.stats) l.stats = true
   return l
@@ -418,6 +468,18 @@ export function restoreSession() {
         const h = st.host ? hostOf(st.host) : null
         if (st.host && !h) continue
         tab = { id: uid(), kind: 'sftp', title: st.title, host: h ? { ...h } : null, color: st.color || '' }
+      } else if (st.kind === 'containers') {
+        const h = st.host ? hostOf(st.host) : null
+        if (st.host && !h) continue
+        const host = h ? { ...h } : null
+        tab = {
+          id: uid(),
+          kind: 'containers',
+          title: st.title,
+          host,
+          engine: st.engine || 'docker',
+          color: st.color || '',
+        }
       } else {
         const root = st.root && buildNode(st.root)
         if (!root) continue

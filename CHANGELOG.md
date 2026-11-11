@@ -7,6 +7,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- A Containers tab for Docker and Kubernetes, on this computer ("Containers" in the sidebar, "Docker containers" /
+  "Kubernetes pods" in the command palette) or on an SSH host ("Docker containers…" / "Kubernetes pods…" in its
+  context menu). (#55)
+  - Docker: every container, running or stopped, grouped by Compose project, with All / Running / Stopped filters
+    and search. The selected one shows its CPU, memory, network and disk I/O, process count and disk size; image,
+    command, created and started time, restart policy and count, health, memory and CPU limits, user, published
+    ports (port ranges shown as one entry) and networks. Shell, Follow logs, Start, Stop and Restart buttons (Stop and
+    Restart ask first). A double click on a running container opens a shell.
+  - Logs: the last 100 to 5000 lines with a time column, errors in red and warnings in yellow, a line filter, wrap
+    and reload; Follow opens a terminal tab that streams new lines (`docker logs --follow` / `kubectl logs --follow`).
+  - Volumes & mounts: each volume or bind mount with its source, path in the container, read-only or read-write,
+    and the volume's size.
+  - Storage: Docker's disk use (images, containers, volumes, build cache, and how much can be reclaimed) along the
+    bottom; clicking it lists every volume and image by size, which containers use each volume, and which volumes
+    and images nothing uses.
+  - Image cleanup in the storage view: "Remove dangling" runs `docker image prune`; "Clean up unused…" lists the
+    images no container uses (stopped ones count as users), all ticked, so some can be kept, and removes exactly
+    those one by one without forcing, so an image a container started using in the meantime stays. Each unused
+    image also has its own remove button. The space freed is measured by Docker afterwards, and images that couldn't
+    be removed are listed with the reason.
+  - Kubernetes: pick a context and namespace (the namespace can be typed when listing namespaces isn't allowed);
+    pods show their status as `kubectl get pods` does (CrashLoopBackOff, Completed, Terminating…), ready count, age
+    and restarts. The selected pod shows its node, IP, owner, QoS class and labels; each container with its image,
+    state and reason, restarts and why its last run ended (for example OOMKilled); its volumes (PVC, ConfigMap,
+    Secret, …) and where they are mounted; and its logs, including the run before the last restart.
+  - Shells start bash in the container, or sh when the image has no bash. When Docker isn't installed, its daemon
+    isn't running or the user can't reach the Docker socket, the tab says so instead of showing raw output. The tab
+    and container terminals are reopened on launch.
 - Record a terminal pane to an asciinema file (`.cast`, asciicast v2) that plays in `asciinema play`, on
   asciinema.org or through agg for a GIF. Start and stop from the pane menu or the command palette ("Start / stop
   recording", no default shortcut); a red REC badge with the elapsed time shows while it runs and stops it when

@@ -8,7 +8,7 @@
 //! docker compose -f tests/servers/docker-compose.yml down
 //! ```
 use kshell_lib::{
-    forward,
+    containers, forward,
     fs::Fs,
     fs::Progress,
     keys,
@@ -40,7 +40,14 @@ fn http_answered(s: &str) -> bool {
 }
 
 fn shell(cols: u16, rows: u16, startup: &str) -> ShellOptions {
-    ShellOptions { cols, rows, startup_command: startup.into(), agent_forward: false, log: None }
+    ShellOptions {
+        cols,
+        rows,
+        startup_command: startup.into(),
+        agent_forward: false,
+        command: None,
+        log: None,
+    }
 }
 
 type Captured = (Channel<InvokeResponseBody>, Arc<Mutex<Vec<u8>>>, Arc<Mutex<Vec<String>>>);
@@ -457,6 +464,7 @@ async fn end_to_end() {
         shell: Some("/bin/sh".into()),
         cwd,
         startup_command: startup_command.into(),
+        command: None,
         log: None,
     };
     check!("spawn shell", terms.open_local("l1".into(), opts(None, ""), ch));
@@ -487,6 +495,126 @@ async fn end_to_end() {
         match terms.open_local("l3".into(), opts(Some("/no/such/dir".into()), ""), ch) {
             Err(e) if e.contains("Folder not found") => Ok(()),
             other => Err(format!("{other:?}")),
+        }
+    );
+
+    println!("Containers");
+    // A command instead of the login shell, over SSH (how a container shell on a host is opened).
+    let (ch, buf, ev) = capture();
+    let sopts = ShellOptions { command: Some("echo exec-$((40+2)); exit 3".into()), ..shell(80, 24, "") };
+    check!("ssh command in a pty", terms.open_ssh("c1".into(), conn.clone(), sopts, ch).await);
+    check!("command output", wait_for(&buf, "exec-42", 10).await);
+    for _ in 0..100 {
+        if !ev.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await
+    }
+    check!(
+        "command's exit code ends the tab",
+        match ev.lock().unwrap().first() {
+            Some(e) if e.contains("\"code\":3") => Ok(()),
+            other => Err(format!("{other:?}")),
+        }
+    );
+    // Local Docker: the telnet test server (busybox, no bash) is listed and opens with sh.
+    let list = check!("docker ps", containers::run_local(&containers::docker_ps()));
+    assert_eq!(list.1, 0, "docker ps failed: {}", list.0);
+    let telnet = containers::parse_docker_ps(&list.0).into_iter().find(|c| c.name == "kshell-telnet");
+    let telnet = check!("kshell-telnet listed", telnet.ok_or("not in docker ps"));
+    let argv = check!("exec command", containers::Shell::Docker { id: telnet.id.clone() }.argv());
+    let (ch, buf, ev) = capture();
+    let copts = LocalOptions { command: Some(argv), ..opts(None, "") };
+    check!("open container shell", terms.open_local("c2".into(), copts, ch));
+    terms.send("c2", Cmd::Write(b"echo in-container-$((40+2)) $(hostname)\n".to_vec())).unwrap();
+    check!("shell runs in the container", wait_for(&buf, "in-container-42", 15).await);
+    terms.send("c2", Cmd::Write(b"exit\n".to_vec())).unwrap();
+    for _ in 0..100 {
+        if !ev.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await
+    }
+    check!(
+        "container exit ends the tab",
+        ev.lock().unwrap().first().cloned().ok_or("no exit event".to_string())
+    );
+    // Details, logs and storage of a test container from real Docker output.
+    let ftp = containers::parse_docker_ps(&list.0).into_iter().find(|c| c.name == "kshell-ftp");
+    let ftp = check!("kshell-ftp listed", ftp.ok_or("not in docker ps"));
+    check!(
+        "compose project from labels",
+        if ftp.project == "kshell-test" && ftp.service == "ftp" { Ok(()) } else { Err(format!("{ftp:?}")) }
+    );
+    let (out, _) =
+        check!("docker inspect", containers::run_local(&containers::docker_inspect_argv(&ftp.id).unwrap()));
+    let d = check!("inspect parsed", containers::parse_docker_inspect(&out));
+    check!(
+        "passive port range merged",
+        match d.ports.iter().find(|p| p.container.starts_with("21000")) {
+            Some(p) if p.container == "21000-21010/tcp" && p.host == "21000-21010" => Ok(()),
+            other => Err(format!("{other:?} in {:?}", d.ports)),
+        }
+    );
+    check!("running with a size", if d.running && d.size_root > 0 { Ok(()) } else { Err(format!("{d:?}")) });
+    let (out, _) =
+        check!("docker stats", containers::run_local(&containers::docker_stats_argv(&ftp.id).unwrap()));
+    check!("stats parsed", containers::parse_docker_stats(&out).filter(|s| s.cpu.ends_with('%')).ok_or(out));
+    let (out, code) =
+        check!("docker logs", containers::run_local(&containers::docker_logs_argv(&ftp.id, 50).unwrap()));
+    let logs = containers::sort_logs(&out);
+    check!(
+        "logs have timestamps",
+        if code == 0 && logs.lines().next().is_some_and(|l| l.starts_with("20")) {
+            Ok(())
+        } else {
+            Err(logs.clone())
+        }
+    );
+    let (out, _) = check!("docker system df", containers::run_local(&containers::docker_df_argv()));
+    let df = containers::parse_docker_df(&out);
+    check!("disk usage rows", if df.iter().any(|d| d.kind == "Images") { Ok(()) } else { Err(out) });
+    let (out, _) = check!("docker system df -v", containers::run_local(&containers::docker_storage_argv()));
+    let st = check!("storage parsed", containers::parse_docker_storage(&out));
+    check!(
+        "test images listed with sizes",
+        if st.images.iter().any(|i| i.name.starts_with("busybox") && i.bytes > 0) {
+            Ok(())
+        } else {
+            Err(format!("{:?}", st.images))
+        }
+    );
+
+    // Image removal: an extra tag goes, an image a container uses is refused (nothing forced).
+    let tag = "kshell-e2e-remove:1".to_string();
+    let (out, code) = check!(
+        "tag a test image",
+        containers::run_local(&["docker".into(), "tag".into(), "busybox:1.36".into(), tag.clone()])
+    );
+    assert_eq!(code, 0, "{out}");
+    let (out, code) =
+        check!("remove the tag", containers::run_local(&containers::docker_image_rm_argv(&tag).unwrap()));
+    check!("tag removed", if code == 0 { Ok(()) } else { Err(out) });
+    let (out, code) = check!(
+        "remove an image in use",
+        containers::run_local(&containers::docker_image_rm_argv("busybox:1.36").unwrap())
+    );
+    check!(
+        "in-use image is refused",
+        match containers::image_rm_error(&out, code, "here") {
+            m if code != 0 && m.starts_with("A container uses it") => Ok(()),
+            m => Err(format!("{code}: {m}")),
+        }
+    );
+
+    // The SSH test server has no Docker: listing over SSH says so.
+    let (out, code) =
+        check!("docker ps over ssh", conn.exec(&containers::sh_join(&containers::docker_ps())).await);
+    check!(
+        "no docker on the host is explained",
+        match containers::docker_error(&out, code as i32, "on test") {
+            m if m.contains("isn't installed on test") => Ok(()),
+            m => Err(m),
         }
     );
 
