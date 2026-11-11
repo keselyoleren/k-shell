@@ -22,7 +22,6 @@ export const store = reactive({
   activeForwards: [],
   toasts: [],
   palette: false,
-  containers: null, // { host, tab: 'docker' | 'kube' } while the container list is open (host null: this computer)
   editor: null, // { host } when host drawer is open
   dialog: null, // generic prompt/confirm dialog
   menu: null,
@@ -123,9 +122,28 @@ export function targetTitle(t) {
   return t.host.label || t.host.host
 }
 
-/** Show the Docker containers / Kubernetes pods of a host (null: this computer). */
-export function openContainers(host = null, tab = 'docker') {
-  store.containers = { host: host ? { ...host } : null, tab }
+const containersTitle = (host) => (host ? `Containers · ${host.label || host.host}` : 'Containers')
+
+/**
+ * Show the Docker containers / Kubernetes pods of a host (null: this computer) in a tab; an open
+ * tab for the same place is reused. engine: 'docker' | 'kube'
+ */
+export function openContainers(host = null, engine = 'docker') {
+  const key = host?.id || ''
+  let tab = store.tabs.find((t) => t.kind === 'containers' && (t.host?.id || '') === key)
+  if (!tab) {
+    tab = {
+      id: uid(),
+      kind: 'containers',
+      title: containersTitle(host),
+      host: host ? { ...host } : null,
+      color: host?.color || '',
+    }
+    store.tabs.push(tab)
+  }
+  tab.engine = engine
+  store.active = tab.id
+  return tab
 }
 
 /**
@@ -377,6 +395,7 @@ export function setTabName(tab, name) {
 }
 function autoTitle(tab) {
   if (tab.kind === 'sftp') return tab.host ? tab.host.label || tab.host.host : 'File Manager'
+  if (tab.kind === 'containers') return containersTitle(tab.host)
   if (tab.kind === 'cast')
     return tab.path
       .split(/[\\/]/)
@@ -416,7 +435,11 @@ function snapshot() {
       title: t.title,
       renamed: !!t.renamed,
       color: t.color,
-      ...(t.kind === 'sftp' ? { host: hostRef(t.host) } : { root: snapNode(t.root) }),
+      ...(t.kind === 'sftp'
+        ? { host: hostRef(t.host) }
+        : t.kind === 'containers'
+          ? { host: hostRef(t.host), engine: t.engine }
+          : { root: snapNode(t.root) }),
     }))
   return { tabs, active: store.tabs.findIndex((t) => t.id === store.active) }
 }
@@ -445,6 +468,18 @@ export function restoreSession() {
         const h = st.host ? hostOf(st.host) : null
         if (st.host && !h) continue
         tab = { id: uid(), kind: 'sftp', title: st.title, host: h ? { ...h } : null, color: st.color || '' }
+      } else if (st.kind === 'containers') {
+        const h = st.host ? hostOf(st.host) : null
+        if (st.host && !h) continue
+        const host = h ? { ...h } : null
+        tab = {
+          id: uid(),
+          kind: 'containers',
+          title: st.title,
+          host,
+          engine: st.engine || 'docker',
+          color: st.color || '',
+        }
       } else {
         const root = st.root && buildNode(st.root)
         if (!root) continue

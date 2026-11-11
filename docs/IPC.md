@@ -84,15 +84,25 @@ PATH matches the user's terminal), a host runs it over its pooled SSH connection
 
 | Command | Arguments | Returns |
 |---|---|---|
-| `docker_containers` | `host` | `[{ id, name, image, status, ports }]` from `docker ps` (running containers); errors say when Docker isn't installed, the daemon isn't running or the Docker socket is permission denied |
+| `docker_containers` | `host` | `[{ id, name, image, state, status, ports: string[], project, service, volumes: string[] }]` from `docker ps --all`, Compose projects first; errors say when Docker isn't installed, the daemon isn't running or the Docker socket is permission denied |
+| `docker_detail` | `host, id` | `docker inspect --size`: `{ id, name, image, created, started_at, finished_at, state, running, exit_code, oom_killed, health, error, restart_count, restart_policy, command, workdir, user, project, service, networks: [{ name, ip }], ports: [{ container, host }], mounts: [{ kind, name, source, destination, rw }], size_rw, size_root, memory_limit, cpu_limit }` (consecutive ports merged into ranges) |
+| `docker_stats` | `host, id` | `{ cpu, mem, mem_perc, net, block, pids }` as `docker stats --no-stream` prints them, or null |
+| `docker_logs` | `host, id, tail` | the last `tail` lines (1–5000) with timestamps, stdout and stderr in time order |
+| `docker_action` | `host, id, action: "start" \| "stop" \| "restart"` | – |
+| `docker_disk` | `host` | `docker system df`: `[{ kind, total, active, size, reclaimable }]` |
+| `docker_storage` | `host` | `docker system df --verbose`: `{ volumes: [{ name, size, bytes, links, driver, anonymous }], images: [{ id, name, size, bytes, containers, created }] }`, largest first |
 | `kube_contexts` | `host` | `{ contexts: string[], current }` (`current` empty when none is set) |
 | `kube_namespaces` | `host, context` | namespace names (empty `context`: kubectl's current one) |
-| `kube_pods` | `host, context, namespace` | `[{ name, phase, ready: "1/2", containers: string[] }]` (`phase` is `Terminating` for a pod being deleted) |
+| `kube_pods` | `host, context, namespace` | `[{ name, status, ready: "1/2", restarts, started, node, ip, containers: string[] }]`; `status` as `kubectl get pods` shows it |
+| `kube_pod` | `host, context, namespace, pod` | the pod fields plus `{ namespace, host_ip, created, qos, owner, service_account, labels: [[k, v]], containers_detail: [{ name, image, init, ready, restarts, state, reason, message, since, last, mounts: [{ volume, path, read_only }] }], volumes: [{ name, kind, source }] }` |
+| `kube_logs` | `host, context, namespace, pod, container, tail, previous` | the last `tail` lines with timestamps; `previous`: of the run before the last restart |
 
 `Shell` (the `container` argument of `term_open_ssh` / `term_open_local`) is
 `{ engine: "docker", id }` → `docker exec -it <id> sh -c 'command -v bash >/dev/null && exec bash || exec sh'`, or
 `{ engine: "kube", context?, namespace, pod, container? }` →
 `kubectl --context=<context> -n <namespace> exec -it <pod> -c <container> -- sh -c '…'` (same shell choice).
+`{ engine: "docker-logs", id }` and `{ engine: "kube-logs", context?, namespace, pod, container? }` follow the logs
+instead (`--follow`, starting from the last 200 lines).
 Names starting with `-` are rejected.
 
 ## Files: `commands/files.rs`

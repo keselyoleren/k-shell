@@ -85,3 +85,101 @@ pub async fn kube_pods(
     }
     c::parse_pods(&out)
 }
+
+/// One container's details (`docker inspect`).
+#[tauri::command]
+pub async fn docker_detail(st: State<'_>, host: Option<Host>, id: String) -> Res<c::DockerDetail> {
+    let (out, code) = run(&st, host.as_ref(), c::docker_inspect_argv(&id)?).await?;
+    if code != 0 {
+        return Err(c::docker_error(&out, code, &place(host.as_ref())));
+    }
+    c::parse_docker_inspect(&out)
+}
+
+/// Live CPU, memory, network and disk use of a running container (takes about a second:
+/// Docker samples the CPU twice).
+#[tauri::command]
+pub async fn docker_stats(st: State<'_>, host: Option<Host>, id: String) -> Res<Option<c::DockerStats>> {
+    let (out, code) = run(&st, host.as_ref(), c::docker_stats_argv(&id)?).await?;
+    if code != 0 {
+        return Err(c::docker_error(&out, code, &place(host.as_ref())));
+    }
+    Ok(c::parse_docker_stats(&out))
+}
+
+/// The last `tail` log lines of a container, stdout and stderr in time order.
+#[tauri::command]
+pub async fn docker_logs(st: State<'_>, host: Option<Host>, id: String, tail: u32) -> Res<String> {
+    let (out, code) = run(&st, host.as_ref(), c::docker_logs_argv(&id, tail)?).await?;
+    if code != 0 {
+        return Err(c::docker_error(&out, code, &place(host.as_ref())));
+    }
+    Ok(c::sort_logs(&out))
+}
+
+/// start / stop / restart a container.
+#[tauri::command]
+pub async fn docker_action(st: State<'_>, host: Option<Host>, id: String, action: String) -> Res<()> {
+    let (out, code) = run(&st, host.as_ref(), c::docker_action_argv(&id, &action)?).await?;
+    if code != 0 {
+        return Err(c::docker_error(&out, code, &place(host.as_ref())));
+    }
+    Ok(())
+}
+
+/// Disk used by images, containers, volumes and the build cache (`docker system df`).
+#[tauri::command]
+pub async fn docker_disk(st: State<'_>, host: Option<Host>) -> Res<Vec<c::DiskUsage>> {
+    let (out, code) = run(&st, host.as_ref(), c::docker_df_argv()).await?;
+    if code != 0 {
+        return Err(c::docker_error(&out, code, &place(host.as_ref())));
+    }
+    Ok(c::parse_docker_df(&out))
+}
+
+/// One pod with its containers and volumes.
+#[tauri::command]
+pub async fn kube_pod(
+    st: State<'_>,
+    host: Option<Host>,
+    context: String,
+    namespace: String,
+    pod: String,
+) -> Res<c::PodDetail> {
+    let (out, code) = run(&st, host.as_ref(), c::kube_pod_argv(&context, &namespace, &pod)?).await?;
+    if code != 0 {
+        return Err(c::kube_error(&out, code, &place(host.as_ref())));
+    }
+    c::parse_pod_detail(&out)
+}
+
+/// The last `tail` log lines of a pod's container; `previous`: of its last run before a restart.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // flat IPC arguments
+pub async fn kube_logs(
+    st: State<'_>,
+    host: Option<Host>,
+    context: String,
+    namespace: String,
+    pod: String,
+    container: String,
+    tail: u32,
+    previous: bool,
+) -> Res<String> {
+    let argv = c::kube_logs_argv(&context, &namespace, &pod, &container, tail, previous)?;
+    let (out, code) = run(&st, host.as_ref(), argv).await?;
+    if code != 0 {
+        return Err(c::kube_error(&out, code, &place(host.as_ref())));
+    }
+    Ok(c::sort_logs(&out))
+}
+
+/// Volumes and images with their sizes (`docker system df --verbose`).
+#[tauri::command]
+pub async fn docker_storage(st: State<'_>, host: Option<Host>) -> Res<c::Storage> {
+    let (out, code) = run(&st, host.as_ref(), c::docker_storage_argv()).await?;
+    if code != 0 {
+        return Err(c::docker_error(&out, code, &place(host.as_ref())));
+    }
+    c::parse_docker_storage(&out)
+}

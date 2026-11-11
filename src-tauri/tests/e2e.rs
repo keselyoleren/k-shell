@@ -539,6 +539,52 @@ async fn end_to_end() {
         "container exit ends the tab",
         ev.lock().unwrap().first().cloned().ok_or("no exit event".to_string())
     );
+    // Details, logs and storage of a test container from real Docker output.
+    let ftp = containers::parse_docker_ps(&list.0).into_iter().find(|c| c.name == "kshell-ftp");
+    let ftp = check!("kshell-ftp listed", ftp.ok_or("not in docker ps"));
+    check!(
+        "compose project from labels",
+        if ftp.project == "kshell-test" && ftp.service == "ftp" { Ok(()) } else { Err(format!("{ftp:?}")) }
+    );
+    let (out, _) =
+        check!("docker inspect", containers::run_local(&containers::docker_inspect_argv(&ftp.id).unwrap()));
+    let d = check!("inspect parsed", containers::parse_docker_inspect(&out));
+    check!(
+        "passive port range merged",
+        match d.ports.iter().find(|p| p.container.starts_with("21000")) {
+            Some(p) if p.container == "21000-21010/tcp" && p.host == "21000-21010" => Ok(()),
+            other => Err(format!("{other:?} in {:?}", d.ports)),
+        }
+    );
+    check!("running with a size", if d.running && d.size_root > 0 { Ok(()) } else { Err(format!("{d:?}")) });
+    let (out, _) =
+        check!("docker stats", containers::run_local(&containers::docker_stats_argv(&ftp.id).unwrap()));
+    check!("stats parsed", containers::parse_docker_stats(&out).filter(|s| s.cpu.ends_with('%')).ok_or(out));
+    let (out, code) =
+        check!("docker logs", containers::run_local(&containers::docker_logs_argv(&ftp.id, 50).unwrap()));
+    let logs = containers::sort_logs(&out);
+    check!(
+        "logs have timestamps",
+        if code == 0 && logs.lines().next().is_some_and(|l| l.starts_with("20")) {
+            Ok(())
+        } else {
+            Err(logs.clone())
+        }
+    );
+    let (out, _) = check!("docker system df", containers::run_local(&containers::docker_df_argv()));
+    let df = containers::parse_docker_df(&out);
+    check!("disk usage rows", if df.iter().any(|d| d.kind == "Images") { Ok(()) } else { Err(out) });
+    let (out, _) = check!("docker system df -v", containers::run_local(&containers::docker_storage_argv()));
+    let st = check!("storage parsed", containers::parse_docker_storage(&out));
+    check!(
+        "test images listed with sizes",
+        if st.images.iter().any(|i| i.name.starts_with("busybox") && i.bytes > 0) {
+            Ok(())
+        } else {
+            Err(format!("{:?}", st.images))
+        }
+    );
+
     // The SSH test server has no Docker: listing over SSH says so.
     let (out, code) =
         check!("docker ps over ssh", conn.exec(&containers::sh_join(&containers::docker_ps())).await);

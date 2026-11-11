@@ -1,4 +1,5 @@
-//! Docker containers and Kubernetes pods: list them, and build the command that opens a shell in one.
+//! Docker containers and Kubernetes pods: list them, show their details, logs, mounts and disk
+//! use, and build the command that opens a shell (or follows the logs) in one.
 //!
 //! Everything runs as a plain `docker` / `kubectl` command, either on this computer or on a saved
 //! host through its SSH connection, so the same parsing and error messages serve both.
@@ -11,7 +12,10 @@ use crate::error::Res;
 /// Starts bash when the image has it, else sh.
 pub const PICK_SHELL: &str = "command -v bash >/dev/null && exec bash || exec sh";
 
-/// A shell inside a container, as a terminal target.
+/// Lines a "follow logs" tab starts with.
+const FOLLOW_TAIL: &str = "200";
+
+/// A terminal tab that runs inside a container: a shell, or its logs followed live.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "engine", rename_all = "lowercase")]
 pub enum Shell {
@@ -28,26 +32,44 @@ pub enum Shell {
         #[serde(default)]
         container: String,
     },
+    #[serde(rename = "docker-logs")]
+    DockerLogs {
+        id: String,
+    },
+    #[serde(rename = "kube-logs")]
+    KubeLogs {
+        #[serde(default)]
+        context: String,
+        namespace: String,
+        pod: String,
+        #[serde(default)]
+        container: String,
+    },
 }
 
 impl Shell {
-    /// The command line that opens the shell, as separate arguments.
+    /// The command line, as separate arguments.
     pub fn argv(&self) -> Res<Vec<String>> {
         match self {
             Shell::Docker { id } => {
                 arg_ok("container", id)?;
                 Ok(strings(&["docker", "exec", "-it", id, "sh", "-c", PICK_SHELL]))
             }
+            Shell::DockerLogs { id } => {
+                arg_ok("container", id)?;
+                Ok(strings(&["docker", "logs", "--follow", "--tail", FOLLOW_TAIL, id]))
+            }
             Shell::Kube { context, namespace, pod, container } => {
-                arg_ok("namespace", namespace)?;
-                arg_ok("pod", pod)?;
-                let mut a = kubectl(context)?;
-                a.extend(strings(&["-n", namespace, "exec", "-it", pod]));
-                if !container.is_empty() {
-                    arg_ok("container", container)?;
-                    a.extend(strings(&["-c", container]));
-                }
+                let mut a = kube_pod_cmd(context, namespace, pod, "exec")?;
+                a.insert(a.len() - 1, "-it".into());
+                container_flag(&mut a, container)?;
                 a.extend(strings(&["--", "sh", "-c", PICK_SHELL]));
+                Ok(a)
+            }
+            Shell::KubeLogs { context, namespace, pod, container } => {
+                let mut a = kube_pod_cmd(context, namespace, pod, "logs")?;
+                a.extend(strings(&["--follow", &format!("--tail={FOLLOW_TAIL}")]));
+                container_flag(&mut a, container)?;
                 Ok(a)
             }
         }
@@ -76,6 +98,23 @@ fn kubectl(context: &str) -> Res<Vec<String>> {
     Ok(a)
 }
 
+/// `kubectl [--context=…] -n <namespace> <verb> <pod>`.
+fn kube_pod_cmd(context: &str, namespace: &str, pod: &str, verb: &str) -> Res<Vec<String>> {
+    arg_ok("namespace", namespace)?;
+    arg_ok("pod", pod)?;
+    let mut a = kubectl(context)?;
+    a.extend(strings(&["-n", namespace, verb, pod]));
+    Ok(a)
+}
+
+fn container_flag(a: &mut Vec<String>, container: &str) -> Res<()> {
+    if !container.is_empty() {
+        arg_ok("container", container)?;
+        a.extend(strings(&["-c", container]));
+    }
+    Ok(())
+}
+
 /// Quote one argument for a POSIX shell (and fish).
 pub fn sh_quote(s: &str) -> String {
     if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./=:@,+%".contains(c)) {
@@ -89,40 +128,496 @@ pub fn sh_join(argv: &[String]) -> String {
     argv.iter().map(|a| sh_quote(a)).collect::<Vec<_>>().join(" ")
 }
 
+/// String at a JSON pointer; numbers are written out, anything else is empty.
+fn s(v: &Value, ptr: &str) -> String {
+    match v.pointer(ptr) {
+        Some(Value::String(x)) => x.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::Bool(b)) => b.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn int(v: &Value, ptr: &str) -> i64 {
+    v.pointer(ptr).and_then(Value::as_i64).unwrap_or(0)
+}
+
+/// Docker's "never" time (`0001-01-01T00:00:00Z`) as empty.
+fn time(v: &Value, ptr: &str) -> String {
+    let t = s(v, ptr);
+    if t.starts_with("0001-") {
+        String::new()
+    } else {
+        t
+    }
+}
+
+/// The JSON document in a command's output, after anything a login shell printed first.
+fn json_in(out: &str, open: char) -> Res<Value> {
+    let start = out.find(open).ok_or_else(|| first_lines(out, 0))?;
+    serde_json::from_str(&out[start..]).map_err(|e| format!("Couldn't read the output: {e}"))
+}
+
 // ---------- Docker ----------
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
 pub struct Container {
     pub id: String,
     pub name: String,
     pub image: String,
+    /// running, exited, paused, restarting, created, dead
+    pub state: String,
+    /// "Up 2 hours", "Exited (0) 3 days ago"
     pub status: String,
-    pub ports: String,
+    /// Published ports, shortened: `8080→80/tcp`.
+    pub ports: Vec<String>,
+    /// Docker Compose project and service, from the container's labels.
+    pub project: String,
+    pub service: String,
+    /// Names of the volumes it mounts.
+    pub volumes: Vec<String>,
 }
 
+/// All containers, stopped ones too.
 pub fn docker_ps() -> Vec<String> {
-    strings(&["docker", "ps", "--no-trunc", "--format", "{{json .}}"])
+    strings(&["docker", "ps", "--all", "--no-trunc", "--format", "{{json .}}"])
 }
 
-/// Running containers from `docker ps --format '{{json .}}'`; other lines (a login banner) are skipped.
+/// Containers from `docker ps --format '{{json .}}'`; other lines (a login banner) are skipped.
 pub fn parse_docker_ps(out: &str) -> Vec<Container> {
-    let field = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let mut list: Vec<Container> = out
         .lines()
         .filter(|l| l.trim_start().starts_with('{'))
         .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .map(|v| Container {
-            id: field(&v, "ID"),
-            // a container can have several names; the first is the one `docker ps` shows
-            name: field(&v, "Names").split(',').next().unwrap_or("").to_string(),
-            image: field(&v, "Image"),
-            status: field(&v, "Status"),
-            ports: field(&v, "Ports"),
+        .map(|v| {
+            let labels = s(&v, "/Labels");
+            let label = |k: &str| {
+                labels
+                    .split(',')
+                    .find_map(|kv| kv.strip_prefix(k)?.strip_prefix('='))
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let status = s(&v, "/Status");
+            // older Docker has no State field
+            let state = match s(&v, "/State") {
+                st if !st.is_empty() => st,
+                _ if status.starts_with("Up") => "running".into(),
+                _ => "exited".into(),
+            };
+            Container {
+                id: s(&v, "/ID"),
+                // a container can have several names; the first is the one `docker ps` shows
+                name: s(&v, "/Names").split(',').next().unwrap_or("").to_string(),
+                image: s(&v, "/Image"),
+                state,
+                status,
+                ports: short_ports(&s(&v, "/Ports")),
+                project: label("com.docker.compose.project"),
+                service: label("com.docker.compose.service"),
+                volumes: s(&v, "/Mounts")
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|m| !m.is_empty())
+                    .map(String::from)
+                    .collect(),
+            }
         })
         .filter(|c| !c.id.is_empty())
         .collect();
-    list.sort_by(|a, b| a.name.cmp(&b.name));
+    list.sort_by(|a, b| {
+        (a.project.is_empty(), &a.project, &a.name).cmp(&(b.project.is_empty(), &b.project, &b.name))
+    });
     list
+}
+
+/// `0.0.0.0:8080->80/tcp, :::8080->80/tcp, 443/tcp` → `["8080→80/tcp", "443/tcp"]`.
+fn short_ports(ports: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in ports.split(", ").map(str::trim).filter(|p| !p.is_empty()) {
+        let p = ["0.0.0.0:", ":::", "[::]:"].iter().fold(p.to_string(), |p, pre| p.replacen(pre, "", 1));
+        let p = p.replace("->", "→");
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Network {
+    pub name: String,
+    pub ip: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Port {
+    /// `80/tcp`
+    pub container: String,
+    /// `8080` or `127.0.0.1:8080`; empty when not published.
+    pub host: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Mount {
+    /// volume, bind, tmpfs, …
+    pub kind: String,
+    /// Volume name (empty for a bind mount).
+    pub name: String,
+    pub source: String,
+    pub destination: String,
+    pub rw: bool,
+}
+
+/// One container from `docker inspect --size`.
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct DockerDetail {
+    pub id: String,
+    pub name: String,
+    pub image: String,
+    pub created: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub state: String,
+    pub running: bool,
+    pub exit_code: i64,
+    pub oom_killed: bool,
+    /// healthy / unhealthy / starting; empty without a health check.
+    pub health: String,
+    pub error: String,
+    pub restart_count: i64,
+    pub restart_policy: String,
+    pub command: String,
+    pub workdir: String,
+    pub user: String,
+    pub project: String,
+    pub service: String,
+    pub networks: Vec<Network>,
+    pub ports: Vec<Port>,
+    pub mounts: Vec<Mount>,
+    /// Bytes written in the container's own layer, and with the image.
+    pub size_rw: i64,
+    pub size_root: i64,
+    /// 0: no limit.
+    pub memory_limit: i64,
+    pub cpu_limit: f64,
+}
+
+pub fn docker_inspect_argv(id: &str) -> Res<Vec<String>> {
+    arg_ok("container", id)?;
+    Ok(strings(&["docker", "inspect", "--size", "--type", "container", id]))
+}
+
+pub fn parse_docker_inspect(out: &str) -> Res<DockerDetail> {
+    let all = json_in(out, '[')?;
+    let v = all.get(0).ok_or("Container not found")?;
+    let labels = v.pointer("/Config/Labels");
+    let label = |k: &str| labels.and_then(|l| l.get(k)).and_then(Value::as_str).unwrap_or("").to_string();
+    let mut command: Vec<String> = vec![s(v, "/Path")];
+    if let Some(args) = v.pointer("/Args").and_then(Value::as_array) {
+        command.extend(args.iter().filter_map(Value::as_str).map(String::from));
+    }
+    let mut networks: Vec<Network> = v
+        .pointer("/NetworkSettings/Networks")
+        .and_then(Value::as_object)
+        .map(|m| m.iter().map(|(name, n)| Network { name: name.clone(), ip: s(n, "/IPAddress") }).collect())
+        .unwrap_or_default();
+    networks.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut ports: Vec<Port> = Vec::new();
+    if let Some(m) = v.pointer("/NetworkSettings/Ports").and_then(Value::as_object) {
+        for (container, binds) in m {
+            let mut hosts: Vec<String> = Vec::new();
+            for b in binds.as_array().map(|a| a.as_slice()).unwrap_or_default() {
+                let (ip, port) = (s(b, "/HostIp"), s(b, "/HostPort"));
+                let h = if ip.is_empty() || ip == "0.0.0.0" || ip == "::" {
+                    port
+                } else {
+                    format!("{ip}:{port}")
+                };
+                if !hosts.contains(&h) {
+                    hosts.push(h);
+                }
+            }
+            if hosts.is_empty() {
+                ports.push(Port { container: container.clone(), host: String::new() });
+            }
+            ports.extend(hosts.into_iter().map(|host| Port { container: container.clone(), host }));
+        }
+    }
+    let port_no = |p: &Port| p.container.split('/').next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+    ports.sort_by_key(|p| (port_no(p), p.host.clone()));
+    let ports = merge_ports(ports);
+    let mounts = v
+        .pointer("/Mounts")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|m| Mount {
+                    kind: s(m, "/Type"),
+                    name: s(m, "/Name"),
+                    source: s(m, "/Source"),
+                    destination: s(m, "/Destination"),
+                    rw: m.pointer("/RW").and_then(Value::as_bool).unwrap_or(true),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(DockerDetail {
+        id: s(v, "/Id"),
+        name: s(v, "/Name").trim_start_matches('/').to_string(),
+        image: s(v, "/Config/Image"),
+        created: time(v, "/Created"),
+        started_at: time(v, "/State/StartedAt"),
+        finished_at: time(v, "/State/FinishedAt"),
+        state: s(v, "/State/Status"),
+        running: v.pointer("/State/Running").and_then(Value::as_bool).unwrap_or(false),
+        exit_code: int(v, "/State/ExitCode"),
+        oom_killed: v.pointer("/State/OOMKilled").and_then(Value::as_bool).unwrap_or(false),
+        health: s(v, "/State/Health/Status"),
+        error: s(v, "/State/Error"),
+        restart_count: int(v, "/RestartCount"),
+        restart_policy: s(v, "/HostConfig/RestartPolicy/Name"),
+        command: sh_join(&command).trim().to_string(),
+        workdir: s(v, "/Config/WorkingDir"),
+        user: s(v, "/Config/User"),
+        project: label("com.docker.compose.project"),
+        service: label("com.docker.compose.service"),
+        networks,
+        ports,
+        mounts,
+        size_rw: int(v, "/SizeRw"),
+        size_root: int(v, "/SizeRootFs"),
+        memory_limit: int(v, "/HostConfig/Memory"),
+        cpu_limit: int(v, "/HostConfig/NanoCpus") as f64 / 1e9,
+    })
+}
+
+/// Consecutive ports published to consecutive host ports (an FTP passive range) as one entry:
+/// `21000/tcp → 21000` … `21010/tcp → 21010` becomes `21000-21010/tcp → 21000-21010`.
+fn merge_ports(ports: Vec<Port>) -> Vec<Port> {
+    /// Host ip and port; None: not published.
+    type Bind = Option<(String, u32)>;
+    /// First and last container port, protocol, first host port.
+    type Run = (u32, u32, String, Bind);
+    fn parse(p: &Port) -> Option<(u32, String, Bind)> {
+        let (n, proto) = p.container.split_once('/')?;
+        let host = if p.host.is_empty() {
+            None
+        } else {
+            let (ip, port) = p.host.rsplit_once(':').unwrap_or(("", &p.host));
+            Some((ip.to_string(), port.parse().ok()?))
+        };
+        Some((n.parse().ok()?, proto.to_string(), host))
+    }
+    fn flush(run: Run, out: &mut Vec<Port>) {
+        let (a, b, proto, host) = run;
+        let range = |x: u32, y: u32| if x == y { x.to_string() } else { format!("{x}-{y}") };
+        out.push(Port {
+            container: format!("{}/{proto}", range(a, b)),
+            host: match host {
+                None => String::new(),
+                Some((ip, h)) if ip.is_empty() => range(h, h + b - a),
+                Some((ip, h)) => format!("{ip}:{}", range(h, h + b - a)),
+            },
+        });
+    }
+    let mut out = Vec::new();
+    let mut run: Option<Run> = None;
+    for p in ports {
+        let Some((n, proto, host)) = parse(&p) else {
+            if let Some(r) = run.take() {
+                flush(r, &mut out);
+            }
+            out.push(p);
+            continue;
+        };
+        if let Some((a, b, rp, rh)) = &mut run {
+            let next = n == *b + 1
+                && proto == *rp
+                && match (&host, &*rh) {
+                    (None, None) => true,
+                    (Some((ip, h)), Some((rip, rh0))) => ip == rip && *h == *rh0 + (n - *a),
+                    _ => false,
+                };
+            if next {
+                *b = n;
+                continue;
+            }
+        }
+        if let Some(r) = run.replace((n, n, proto, host)) {
+            flush(r, &mut out);
+        }
+    }
+    if let Some(r) = run {
+        flush(r, &mut out);
+    }
+    out
+}
+
+/// Live usage of a running container (`docker stats --no-stream`), as Docker prints it.
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct DockerStats {
+    pub cpu: String,
+    /// "12.3MiB / 7.6GiB"
+    pub mem: String,
+    pub mem_perc: String,
+    pub net: String,
+    pub block: String,
+    pub pids: String,
+}
+
+pub fn docker_stats_argv(id: &str) -> Res<Vec<String>> {
+    arg_ok("container", id)?;
+    Ok(strings(&["docker", "stats", "--no-stream", "--format", "{{json .}}", id]))
+}
+
+pub fn parse_docker_stats(out: &str) -> Option<DockerStats> {
+    let v = json_in(out, '{').ok()?;
+    Some(DockerStats {
+        cpu: s(&v, "/CPUPerc"),
+        mem: s(&v, "/MemUsage"),
+        mem_perc: s(&v, "/MemPerc"),
+        net: s(&v, "/NetIO"),
+        block: s(&v, "/BlockIO"),
+        pids: s(&v, "/PIDs"),
+    })
+}
+
+pub fn docker_logs_argv(id: &str, tail: u32) -> Res<Vec<String>> {
+    arg_ok("container", id)?;
+    Ok(strings(&["docker", "logs", "--timestamps", "--tail", &tail.clamp(1, 5000).to_string(), id]))
+}
+
+/// start / stop / restart a container.
+pub fn docker_action_argv(id: &str, action: &str) -> Res<Vec<String>> {
+    arg_ok("container", id)?;
+    if !["start", "stop", "restart"].contains(&action) {
+        return Err(format!("Unknown action: {action}"));
+    }
+    Ok(strings(&["docker", action, id]))
+}
+
+/// One row of `docker system df`: Images, Containers, Local Volumes, Build Cache.
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct DiskUsage {
+    pub kind: String,
+    pub total: String,
+    pub active: String,
+    pub size: String,
+    /// "1.2GB (40%)"
+    pub reclaimable: String,
+}
+
+pub fn docker_df_argv() -> Vec<String> {
+    strings(&["docker", "system", "df", "--format", "{{json .}}"])
+}
+
+pub fn parse_docker_df(out: &str) -> Vec<DiskUsage> {
+    out.lines()
+        .filter(|l| l.trim_start().starts_with('{'))
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .map(|v| DiskUsage {
+            kind: s(&v, "/Type"),
+            total: s(&v, "/TotalCount"),
+            active: s(&v, "/Active"),
+            size: s(&v, "/Size"),
+            reclaimable: s(&v, "/Reclaimable"),
+        })
+        .filter(|d| !d.kind.is_empty())
+        .collect()
+}
+
+/// Bytes in a size Docker prints (`23.65MB`, `1.2GB`, `512B`, `8.9kB`); 0 when unreadable.
+pub fn size_bytes(s: &str) -> u64 {
+    let s = s.trim();
+    let split = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+    let (num, unit) = s.split_at(split);
+    let n: f64 = num.parse().unwrap_or(0.0);
+    let mult = match unit.trim().to_ascii_lowercase().as_str() {
+        "kb" => 1e3,
+        "mb" => 1e6,
+        "gb" => 1e9,
+        "tb" => 1e12,
+        "kib" => 1024.0,
+        "mib" => 1024.0 * 1024.0,
+        "gib" => 1024.0 * 1024.0 * 1024.0,
+        _ => 1.0,
+    };
+    (n * mult) as u64
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Volume {
+    pub name: String,
+    pub size: String,
+    pub bytes: u64,
+    /// Containers using it (running or stopped).
+    pub links: i64,
+    pub driver: String,
+    /// Created without a name (`docker run -v /data`).
+    pub anonymous: bool,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Image {
+    pub id: String,
+    /// `nginx:1.27`, or `<none>` for a dangling image.
+    pub name: String,
+    pub size: String,
+    pub bytes: u64,
+    /// Containers created from it.
+    pub containers: i64,
+    pub created: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Storage {
+    /// Largest first.
+    pub volumes: Vec<Volume>,
+    pub images: Vec<Image>,
+}
+
+pub fn docker_storage_argv() -> Vec<String> {
+    strings(&["docker", "system", "df", "--verbose", "--format", "{{json .}}"])
+}
+
+/// Volumes and images with their sizes, from `docker system df --verbose --format '{{json .}}'`.
+pub fn parse_docker_storage(out: &str) -> Res<Storage> {
+    let v = json_in(out, '{')?;
+    let list = |k: &str| v.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    let num = |x: &Value, p: &str| s(x, p).parse::<i64>().unwrap_or(0);
+    let mut volumes: Vec<Volume> = list("Volumes")
+        .iter()
+        .map(|x| Volume {
+            name: s(x, "/Name"),
+            size: s(x, "/Size"),
+            bytes: size_bytes(&s(x, "/Size")),
+            links: num(x, "/Links"),
+            driver: s(x, "/Driver"),
+            anonymous: s(x, "/Labels").contains("com.docker.volume.anonymous"),
+        })
+        .collect();
+    volumes.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
+    let mut images: Vec<Image> = list("Images")
+        .iter()
+        .map(|x| {
+            let (repo, tag) = (s(x, "/Repository"), s(x, "/Tag"));
+            Image {
+                id: s(x, "/ID"),
+                name: if repo.is_empty() || repo == "<none>" {
+                    "<none>".into()
+                } else {
+                    format!("{repo}:{tag}")
+                },
+                size: s(x, "/Size"),
+                bytes: size_bytes(&s(x, "/Size")),
+                containers: num(x, "/Containers"),
+                created: s(x, "/CreatedSince"),
+            }
+        })
+        .collect();
+    images.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
+    Ok(Storage { volumes, images })
 }
 
 /// What went wrong running a `docker` command, in words.
@@ -148,6 +643,30 @@ pub fn docker_error(out: &str, code: i32, place: &str) -> String {
     first_lines(out, code)
 }
 
+// ---------- logs ----------
+
+/// Log lines in time order. stdout and stderr arrive one after the other, so lines are sorted by
+/// their timestamp (`--timestamps`); a line without one stays with the line before it.
+pub fn sort_logs(out: &str) -> String {
+    let mut entries: Vec<(chrono::DateTime<chrono::FixedOffset>, usize, String)> = Vec::new();
+    let mut head: Vec<String> = Vec::new(); // lines before the first timestamp
+    for line in out.lines() {
+        let ts = line.split_once(' ').map_or(line, |(t, _)| t);
+        match chrono::DateTime::parse_from_rfc3339(ts) {
+            Ok(t) => entries.push((t, entries.len(), line.to_string())),
+            Err(_) => match entries.last_mut() {
+                Some(e) => {
+                    e.2.push('\n');
+                    e.2.push_str(line);
+                }
+                None => head.push(line.to_string()),
+            },
+        }
+    }
+    entries.sort_by_key(|e| (e.0, e.1));
+    head.into_iter().chain(entries.into_iter().map(|e| e.2)).collect::<Vec<_>>().join("\n")
+}
+
 // ---------- Kubernetes ----------
 
 #[derive(Serialize, Clone, Debug, PartialEq, Default)]
@@ -157,13 +676,18 @@ pub struct KubeContexts {
     pub current: String,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
 pub struct Pod {
     pub name: String,
-    /// Running, Pending, …
-    pub phase: String,
+    /// What `kubectl get pods` shows: Running, Pending, CrashLoopBackOff, Completed, Terminating, …
+    pub status: String,
     /// Ready containers, e.g. `1/2`.
     pub ready: String,
+    pub restarts: i64,
+    /// When the pod started (RFC 3339), else when it was created.
+    pub started: String,
+    pub node: String,
+    pub ip: String,
     pub containers: Vec<String>,
 }
 
@@ -214,42 +738,268 @@ pub fn kube_pods_argv(context: &str, namespace: &str) -> Res<Vec<String>> {
     Ok(a)
 }
 
+pub fn kube_pod_argv(context: &str, namespace: &str, pod: &str) -> Res<Vec<String>> {
+    let mut a = kube_pod_cmd(context, namespace, pod, "get")?;
+    a.insert(a.len() - 1, "pod".into());
+    a.extend(strings(&["--request-timeout=15s", "-o", "json"]));
+    Ok(a)
+}
+
+pub fn kube_logs_argv(
+    context: &str,
+    namespace: &str,
+    pod: &str,
+    container: &str,
+    tail: u32,
+    previous: bool,
+) -> Res<Vec<String>> {
+    let mut a = kube_pod_cmd(context, namespace, pod, "logs")?;
+    a.extend(strings(&["--timestamps", &format!("--tail={}", tail.clamp(1, 5000)), "--request-timeout=15s"]));
+    if previous {
+        a.push("--previous".into());
+    }
+    container_flag(&mut a, container)?;
+    Ok(a)
+}
+
+/// The status column of `kubectl get pods`: a waiting or terminated container's reason wins over
+/// the phase, a pod being deleted is Terminating.
+fn pod_status(p: &Value) -> String {
+    if p.pointer("/metadata/deletionTimestamp").is_some_and(|d| !d.is_null()) {
+        return "Terminating".into();
+    }
+    let reason = s(p, "/status/reason"); // Evicted, …
+    if !reason.is_empty() {
+        return reason;
+    }
+    let statuses = p.pointer("/status/containerStatuses").and_then(Value::as_array);
+    for c in statuses.map(|a| a.as_slice()).unwrap_or_default() {
+        let waiting = s(c, "/state/waiting/reason");
+        if !waiting.is_empty() {
+            return waiting;
+        }
+        let term = s(c, "/state/terminated/reason");
+        if !term.is_empty() && s(p, "/status/phase") != "Running" {
+            return term;
+        }
+    }
+    s(p, "/status/phase")
+}
+
+fn pod_from(p: &Value) -> Pod {
+    let containers: Vec<String> = p
+        .pointer("/spec/containers")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().map(|c| s(c, "/name")).filter(|n| !n.is_empty()).collect())
+        .unwrap_or_default();
+    let statuses = p.pointer("/status/containerStatuses").and_then(Value::as_array);
+    let all = statuses.map(|a| a.as_slice()).unwrap_or_default();
+    let ready = all.iter().filter(|c| c["ready"].as_bool() == Some(true)).count();
+    let started = match s(p, "/status/startTime") {
+        t if t.is_empty() => s(p, "/metadata/creationTimestamp"),
+        t => t,
+    };
+    Pod {
+        name: s(p, "/metadata/name"),
+        status: pod_status(p),
+        ready: format!("{ready}/{}", containers.len()),
+        restarts: all.iter().map(|c| int(c, "/restartCount")).sum(),
+        started,
+        node: s(p, "/spec/nodeName"),
+        ip: s(p, "/status/podIP"),
+        containers,
+    }
+}
+
 /// Pods from `kubectl get pods -o json`.
 pub fn parse_pods(out: &str) -> Res<Vec<Pod>> {
-    let json = out.find('{').map(|i| &out[i..]).ok_or("kubectl returned no pod list")?;
-    let v: Value = serde_json::from_str(json).map_err(|e| format!("Couldn't read the pod list: {e}"))?;
-    let s = |v: &Value, p: &str| v.pointer(p).and_then(Value::as_str).unwrap_or("").to_string();
+    let v = json_in(out, '{')?;
     let mut pods: Vec<Pod> = v["items"]
         .as_array()
         .map(|a| a.as_slice())
         .unwrap_or_default()
         .iter()
-        .map(|p| {
-            let containers: Vec<String> = p
-                .pointer("/spec/containers")
-                .and_then(Value::as_array)
-                .map(|a| a.iter().map(|c| s(c, "/name")).filter(|n| !n.is_empty()).collect())
-                .unwrap_or_default();
-            let statuses = p.pointer("/status/containerStatuses").and_then(Value::as_array);
-            let ready =
-                statuses.map_or(0, |a| a.iter().filter(|c| c["ready"].as_bool() == Some(true)).count());
-            // a pod being deleted still says Running
-            let phase = if p.pointer("/metadata/deletionTimestamp").is_some_and(|d| !d.is_null()) {
-                "Terminating".to_string()
-            } else {
-                s(p, "/status/phase")
-            };
-            Pod {
-                name: s(p, "/metadata/name"),
-                phase,
-                ready: format!("{ready}/{}", containers.len()),
-                containers,
-            }
-        })
+        .map(pod_from)
         .filter(|p| !p.name.is_empty())
         .collect();
     pods.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(pods)
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct VolumeMount {
+    pub volume: String,
+    pub path: String,
+    pub read_only: bool,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct KubeContainer {
+    pub name: String,
+    pub image: String,
+    /// An init container (runs before the others).
+    pub init: bool,
+    pub ready: bool,
+    pub restarts: i64,
+    /// Running, Waiting or Terminated.
+    pub state: String,
+    /// Why it is waiting or terminated (CrashLoopBackOff, OOMKilled, Completed…), with the exit code.
+    pub reason: String,
+    pub message: String,
+    pub since: String,
+    /// Why the previous run ended, when it restarted: `Error (exit 1)`.
+    pub last: String,
+    pub mounts: Vec<VolumeMount>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct KubeVolume {
+    pub name: String,
+    /// PVC, ConfigMap, Secret, emptyDir, hostPath, …
+    pub kind: String,
+    /// The claim, config map, secret or path behind it.
+    pub source: String,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct PodDetail {
+    #[serde(flatten)]
+    pub pod: Pod,
+    pub namespace: String,
+    pub host_ip: String,
+    pub created: String,
+    pub qos: String,
+    /// `ReplicaSet/web-7d9f…`
+    pub owner: String,
+    pub service_account: String,
+    pub labels: Vec<(String, String)>,
+    pub containers_detail: Vec<KubeContainer>,
+    pub volumes: Vec<KubeVolume>,
+}
+
+fn terminated_text(t: &Value) -> String {
+    let reason = s(t, "/reason");
+    let code = int(t, "/exitCode");
+    match (reason.is_empty(), code) {
+        (true, c) => format!("exit {c}"),
+        (false, 0) => reason,
+        (false, c) => format!("{reason} (exit {c})"),
+    }
+}
+
+fn kube_container(spec: &Value, status: Option<&Value>, init: bool) -> KubeContainer {
+    let mut c = KubeContainer {
+        name: s(spec, "/name"),
+        image: s(spec, "/image"),
+        init,
+        mounts: spec
+            .pointer("/volumeMounts")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|m| VolumeMount {
+                        volume: s(m, "/name"),
+                        path: s(m, "/mountPath"),
+                        read_only: m["readOnly"].as_bool().unwrap_or(false),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    let Some(st) = status else {
+        c.state = "Waiting".into();
+        return c;
+    };
+    c.ready = st["ready"].as_bool().unwrap_or(false);
+    c.restarts = int(st, "/restartCount");
+    if let Some(t) = st.pointer("/state/running") {
+        c.state = "Running".into();
+        c.since = s(t, "/startedAt");
+    } else if let Some(t) = st.pointer("/state/waiting") {
+        c.state = "Waiting".into();
+        c.reason = s(t, "/reason");
+        c.message = s(t, "/message");
+    } else if let Some(t) = st.pointer("/state/terminated") {
+        c.state = "Terminated".into();
+        c.reason = terminated_text(t);
+        c.message = s(t, "/message");
+        c.since = s(t, "/finishedAt");
+    }
+    if let Some(t) = st.pointer("/lastState/terminated") {
+        c.last = terminated_text(t);
+    }
+    c
+}
+
+fn kube_volume(v: &Value) -> KubeVolume {
+    let name = s(v, "/name");
+    let (kind, source) = if v.get("persistentVolumeClaim").is_some() {
+        ("PVC", s(v, "/persistentVolumeClaim/claimName"))
+    } else if v.get("configMap").is_some() {
+        ("ConfigMap", s(v, "/configMap/name"))
+    } else if v.get("secret").is_some() {
+        ("Secret", s(v, "/secret/secretName"))
+    } else if v.get("emptyDir").is_some() {
+        ("emptyDir", s(v, "/emptyDir/medium"))
+    } else if v.get("hostPath").is_some() {
+        ("hostPath", s(v, "/hostPath/path"))
+    } else if v.get("nfs").is_some() {
+        ("NFS", format!("{}:{}", s(v, "/nfs/server"), s(v, "/nfs/path")))
+    } else if v.get("csi").is_some() {
+        ("CSI", s(v, "/csi/driver"))
+    } else if let Some(p) = v.pointer("/projected/sources").and_then(Value::as_array) {
+        let kinds: Vec<String> = p.iter().filter_map(|x| x.as_object()?.keys().next().cloned()).collect();
+        ("Projected", kinds.join(", "))
+    } else {
+        let other = v.as_object().and_then(|o| o.keys().find(|k| *k != "name").cloned()).unwrap_or_default();
+        return KubeVolume { name, kind: other, source: String::new() };
+    };
+    KubeVolume { name, kind: kind.into(), source }
+}
+
+/// One pod from `kubectl get pod <name> -o json`.
+pub fn parse_pod_detail(out: &str) -> Res<PodDetail> {
+    let p = json_in(out, '{')?;
+    let status_of = |list: &str, name: &str| -> Option<Value> {
+        p.pointer(list)?.as_array()?.iter().find(|c| c["name"].as_str() == Some(name)).cloned()
+    };
+    let mut containers = Vec::new();
+    for (specs, statuses, init) in [
+        ("/spec/initContainers", "/status/initContainerStatuses", true),
+        ("/spec/containers", "/status/containerStatuses", false),
+    ] {
+        for spec in p.pointer(specs).and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or_default() {
+            let st = status_of(statuses, &s(spec, "/name"));
+            containers.push(kube_container(spec, st.as_ref(), init));
+        }
+    }
+    let owner = p
+        .pointer("/metadata/ownerReferences/0")
+        .map(|o| format!("{}/{}", s(o, "/kind"), s(o, "/name")))
+        .unwrap_or_default();
+    let mut labels: Vec<(String, String)> = p
+        .pointer("/metadata/labels")
+        .and_then(Value::as_object)
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+        .unwrap_or_default();
+    labels.sort();
+    Ok(PodDetail {
+        pod: pod_from(&p),
+        namespace: s(&p, "/metadata/namespace"),
+        host_ip: s(&p, "/status/hostIP"),
+        created: s(&p, "/metadata/creationTimestamp"),
+        qos: s(&p, "/status/qosClass"),
+        owner,
+        service_account: s(&p, "/spec/serviceAccountName"),
+        labels,
+        containers_detail: containers,
+        volumes: p
+            .pointer("/spec/volumes")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().map(kube_volume).collect())
+            .unwrap_or_default(),
+    })
 }
 
 /// What went wrong running a `kubectl` command, in words.
@@ -338,6 +1088,11 @@ mod tests {
         assert!(Shell::Docker { id: "".into() }.argv().is_err());
         assert!(Shell::Docker { id: "--privileged".into() }.argv().is_err());
         assert!(Shell::Docker { id: "a\nb".into() }.argv().is_err());
+        let a = Shell::DockerLogs { id: "abc".into() }.argv().unwrap();
+        assert_eq!(sh_join(&a), "docker logs --follow --tail 200 abc");
+        assert!(docker_action_argv("abc", "rm").is_err());
+        assert_eq!(docker_action_argv("abc", "restart").unwrap(), strings(&["docker", "restart", "abc"]));
+        assert_eq!(docker_logs_argv("abc", 0).unwrap()[4], "1");
     }
 
     #[test]
@@ -355,7 +1110,7 @@ mod tests {
         );
         let s =
             Shell::Kube { context: "".into(), namespace: "ns".into(), pod: "p".into(), container: "".into() };
-        assert_eq!(s.argv().unwrap()[..5], strings(&["kubectl", "-n", "ns", "exec", "-it"]));
+        assert_eq!(s.argv().unwrap()[..6], strings(&["kubectl", "-n", "ns", "exec", "-it", "p"]));
         let s = Shell::Kube {
             context: "-x".into(),
             namespace: "ns".into(),
@@ -363,6 +1118,21 @@ mod tests {
             container: "".into(),
         };
         assert!(s.argv().is_err());
+        let s = Shell::KubeLogs {
+            context: "".into(),
+            namespace: "ns".into(),
+            pod: "p".into(),
+            container: "c".into(),
+        };
+        assert_eq!(sh_join(&s.argv().unwrap()), "kubectl -n ns logs p --follow --tail=200 -c c");
+        assert_eq!(
+            sh_join(&kube_logs_argv("", "ns", "p", "", 100, true).unwrap()),
+            "kubectl -n ns logs p --timestamps --tail=100 --request-timeout=15s --previous"
+        );
+        assert_eq!(
+            sh_join(&kube_pod_argv("", "ns", "p").unwrap()),
+            "kubectl -n ns get pod p --request-timeout=15s -o json"
+        );
     }
 
     #[test]
@@ -371,18 +1141,124 @@ mod tests {
         assert_eq!(s, Shell::Docker { id: "x".into() });
         let s: Shell = serde_json::from_str(r#"{"engine":"kube","namespace":"n","pod":"p"}"#).unwrap();
         assert!(matches!(s, Shell::Kube { ref context, .. } if context.is_empty()));
+        let s: Shell = serde_json::from_str(r#"{"engine":"docker-logs","id":"x"}"#).unwrap();
+        assert_eq!(s, Shell::DockerLogs { id: "x".into() });
     }
 
     #[test]
     fn docker_ps_output() {
         let out = "Welcome!\n\
-            {\"ID\":\"bbb\",\"Image\":\"busybox:1.36\",\"Names\":\"kshell-telnet\",\"Ports\":\"0.0.0.0:2323->2323/tcp\",\"Status\":\"Up 2 minutes\"}\n\
-            {\"ID\":\"aaa\",\"Image\":\"nginx\",\"Names\":\"api,alias\",\"Ports\":\"\",\"Status\":\"Up 1 hour\"}\n";
+            {\"ID\":\"bbb\",\"Image\":\"busybox:1.36\",\"Names\":\"kshell-telnet\",\"Ports\":\"0.0.0.0:2323->2323/tcp, :::2323->2323/tcp\",\"State\":\"running\",\"Status\":\"Up 2 minutes\",\"Labels\":\"com.docker.compose.project=kshell-test,com.docker.compose.service=telnet\",\"Mounts\":\"data,cfg\"}\n\
+            {\"ID\":\"aaa\",\"Image\":\"nginx\",\"Names\":\"api,alias\",\"Ports\":\"\",\"Status\":\"Exited (0) 1 hour ago\",\"Labels\":\"\"}\n";
         let list = parse_docker_ps(out);
         assert_eq!(list.len(), 2);
-        assert_eq!(list[0].name, "api");
-        assert_eq!(list[1].ports, "0.0.0.0:2323->2323/tcp");
+        assert_eq!(list[0].name, "kshell-telnet", "compose projects first");
+        assert_eq!(list[0].ports, vec!["2323→2323/tcp"]);
+        assert_eq!((list[0].project.as_str(), list[0].service.as_str()), ("kshell-test", "telnet"));
+        assert_eq!(list[0].volumes, vec!["data", "cfg"]);
+        assert_eq!(list[1].name, "api");
+        assert_eq!(list[1].state, "exited", "derived from Status on old Docker");
         assert!(parse_docker_ps("").is_empty());
+        assert_eq!(
+            short_ports("127.0.0.1:5432->5432/tcp, 80/tcp"),
+            vec!["127.0.0.1:5432→5432/tcp", "80/tcp"]
+        );
+    }
+
+    #[test]
+    fn docker_inspect_output() {
+        let out = r#"[{"Id":"abc","Name":"/web","Path":"nginx","Args":["-g","daemon off;"],
+          "Created":"2026-11-01T10:00:00Z","RestartCount":2,"SizeRw":4096,"SizeRootFs":190000000,
+          "State":{"Status":"running","Running":true,"ExitCode":0,"StartedAt":"2026-11-02T10:00:00Z",
+                   "FinishedAt":"0001-01-01T00:00:00Z","Health":{"Status":"healthy"}},
+          "Config":{"Image":"nginx:1.27","WorkingDir":"/","User":"","Labels":{"com.docker.compose.project":"site"}},
+          "HostConfig":{"RestartPolicy":{"Name":"unless-stopped"},"Memory":536870912,"NanoCpus":1500000000},
+          "NetworkSettings":{"Networks":{"site_default":{"IPAddress":"172.18.0.2"}},
+            "Ports":{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"},{"HostIp":"::","HostPort":"8080"}],"443/tcp":null}},
+          "Mounts":[{"Type":"volume","Name":"site_data","Source":"/var/lib/docker/volumes/site_data/_data","Destination":"/data","RW":true},
+                    {"Type":"bind","Source":"/srv/conf","Destination":"/etc/nginx/conf.d","RW":false}]}]"#;
+        let d = parse_docker_inspect(out).unwrap();
+        assert_eq!(d.name, "web");
+        assert_eq!(d.command, "nginx -g 'daemon off;'");
+        assert_eq!(d.finished_at, "");
+        assert_eq!(d.health, "healthy");
+        assert_eq!(d.restart_policy, "unless-stopped");
+        assert_eq!(d.project, "site");
+        assert_eq!(d.networks, vec![Network { name: "site_default".into(), ip: "172.18.0.2".into() }]);
+        assert_eq!(d.ports.len(), 2);
+        assert_eq!(d.ports[0].container, "80/tcp");
+        assert_eq!((d.ports[0].container.as_str(), d.ports[0].host.as_str()), ("80/tcp", "8080"));
+        assert_eq!(d.ports[1].host, "");
+        assert!(!d.mounts[1].rw);
+        assert_eq!(d.cpu_limit, 1.5);
+        assert!(parse_docker_inspect("[]").is_err());
+        assert!(parse_docker_inspect("Error: No such container: x").is_err());
+    }
+
+    #[test]
+    fn port_ranges() {
+        let p = |c: &str, h: &str| Port { container: c.into(), host: h.into() };
+        let mut ports: Vec<Port> = (21000..=21003).map(|n| p(&format!("{n}/tcp"), &n.to_string())).collect();
+        ports.insert(0, p("21/tcp", "2121"));
+        ports.push(p("30000/tcp", "127.0.0.1:40000"));
+        ports.push(p("30001/tcp", "127.0.0.1:40001"));
+        ports.push(p("30002/udp", ""));
+        ports.push(p("30003/udp", ""));
+        assert_eq!(
+            merge_ports(ports),
+            vec![
+                p("21/tcp", "2121"),
+                p("21000-21003/tcp", "21000-21003"),
+                p("30000-30001/tcp", "127.0.0.1:40000-40001"),
+                p("30002-30003/udp", ""),
+            ]
+        );
+        // not consecutive on the host side: kept apart
+        assert_eq!(merge_ports(vec![p("80/tcp", "8080"), p("81/tcp", "9090")]).len(), 2);
+    }
+
+    #[test]
+    fn storage() {
+        assert_eq!(size_bytes("23.65MB"), 23_650_000);
+        assert_eq!(size_bytes("512B"), 512);
+        assert_eq!(size_bytes("1.5GiB"), 1_610_612_736);
+        assert_eq!(size_bytes("N/A"), 0);
+        let out = r#"{"Images":[{"ID":"sha256:a","Repository":"nginx","Tag":"1.27","Size":"190MB","Containers":"1","CreatedSince":"2 weeks ago"},
+            {"ID":"sha256:b","Repository":"<none>","Tag":"<none>","Size":"1.2GB","Containers":"0","CreatedSince":"3 months ago"}],
+          "Volumes":[{"Name":"small","Size":"8kB","Links":"1","Driver":"local","Labels":""},
+            {"Name":"abc123","Size":"2GB","Links":"0","Driver":"local","Labels":"com.docker.volume.anonymous="}]}"#;
+        let st = parse_docker_storage(out).unwrap();
+        assert_eq!(st.volumes[0].name, "abc123", "largest first");
+        assert!(st.volumes[0].anonymous && st.volumes[0].links == 0);
+        assert_eq!(st.images[0].name, "<none>");
+        assert_eq!(st.images[1].name, "nginx:1.27");
+        assert_eq!(st.images[1].containers, 1);
+    }
+
+    #[test]
+    fn stats_and_df() {
+        let st = parse_docker_stats(
+            r#"{"CPUPerc":"0.12%","MemUsage":"5MiB / 7.6GiB","MemPerc":"0.06%","NetIO":"1kB / 0B","BlockIO":"0B / 0B","PIDs":"3"}"#,
+        )
+        .unwrap();
+        assert_eq!((st.cpu.as_str(), st.pids.as_str()), ("0.12%", "3"));
+        let df = parse_docker_df(
+            "{\"Type\":\"Images\",\"TotalCount\":\"12\",\"Active\":\"4\",\"Size\":\"3.2GB\",\"Reclaimable\":\"1.1GB (34%)\"}\n\
+             {\"Type\":\"Local Volumes\",\"TotalCount\":3,\"Active\":\"1\",\"Size\":\"20MB\",\"Reclaimable\":\"5MB (25%)\"}",
+        );
+        assert_eq!(df.len(), 2);
+        assert_eq!(df[1].total, "3", "numbers too");
+    }
+
+    #[test]
+    fn logs_in_time_order() {
+        let out =
+            "2026-11-11T10:00:01.5Z out 2\n2026-11-11T10:00:00Z out 1\n  continued\n2026-11-11T10:00:01Z err";
+        assert_eq!(
+            sort_logs(out),
+            "2026-11-11T10:00:00Z out 1\n  continued\n2026-11-11T10:00:01Z err\n2026-11-11T10:00:01.5Z out 2"
+        );
+        assert_eq!(sort_logs("banner\n2026-11-11T10:00:00Z a"), "banner\n2026-11-11T10:00:00Z a");
     }
 
     #[test]
@@ -409,19 +1285,63 @@ mod tests {
     #[test]
     fn pods() {
         let out = r#"{"items":[
-          {"metadata":{"name":"web-1"},"spec":{"containers":[{"name":"app"},{"name":"sidecar"}]},
-           "status":{"phase":"Running","containerStatuses":[{"name":"app","ready":true},{"name":"sidecar","ready":false}]}},
-          {"metadata":{"name":"old","deletionTimestamp":"2026-01-01T00:00:00Z"},"spec":{"containers":[{"name":"c"}]},
-           "status":{"phase":"Running"}}
+          {"metadata":{"name":"web-1"},"spec":{"nodeName":"n1","containers":[{"name":"app"},{"name":"sidecar"}]},
+           "status":{"phase":"Running","startTime":"2026-11-10T00:00:00Z","podIP":"10.0.0.5","containerStatuses":[
+             {"name":"app","ready":true,"restartCount":1},
+             {"name":"sidecar","ready":false,"restartCount":4,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}},
+          {"metadata":{"name":"old","deletionTimestamp":"2026-01-01T00:00:00Z","creationTimestamp":"2025-12-01T00:00:00Z"},
+           "spec":{"containers":[{"name":"c"}]},"status":{"phase":"Running"}},
+          {"metadata":{"name":"job"},"spec":{"containers":[{"name":"c"}]},"status":{"phase":"Succeeded",
+           "containerStatuses":[{"name":"c","ready":false,"state":{"terminated":{"reason":"Completed","exitCode":0}}}]}}
         ]}"#;
         let p = parse_pods(out).unwrap();
-        assert_eq!(p[0].name, "old");
-        assert_eq!(p[0].phase, "Terminating");
-        assert_eq!(p[1].containers, vec!["app", "sidecar"]);
-        assert_eq!(p[1].ready, "1/2");
+        assert_eq!(p.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), vec!["job", "old", "web-1"]);
+        assert_eq!(p[0].status, "Completed");
+        assert_eq!(p[1].status, "Terminating");
+        assert_eq!(p[1].started, "2025-12-01T00:00:00Z", "creation time when not started");
+        assert_eq!(p[2].status, "CrashLoopBackOff");
+        assert_eq!((p[2].ready.as_str(), p[2].restarts), ("1/2", 5));
+        assert_eq!(p[2].node, "n1");
         assert!(parse_pods("No resources found").is_err());
         assert!(parse_pods(r#"{"items":[]}"#).unwrap().is_empty());
         assert!(kube_error("sh: kubectl: not found", 127, "on web").contains("kubectl isn't installed"));
+    }
+
+    #[test]
+    fn pod_detail() {
+        let out = r#"{"metadata":{"name":"db-0","namespace":"prod","creationTimestamp":"2026-11-01T00:00:00Z",
+            "labels":{"app":"db"},"ownerReferences":[{"kind":"StatefulSet","name":"db"}]},
+          "spec":{"nodeName":"n2","serviceAccountName":"default",
+            "initContainers":[{"name":"init","image":"busybox"}],
+            "containers":[{"name":"pg","image":"postgres:16","volumeMounts":[{"name":"data","mountPath":"/var/lib/postgresql"},
+              {"name":"cfg","mountPath":"/etc/pg","readOnly":true}]}],
+            "volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"data-db-0"}},{"name":"cfg","configMap":{"name":"pg-config"}},
+              {"name":"tok","projected":{"sources":[{"serviceAccountToken":{}},{"configMap":{}}]}},{"name":"x","gitRepo":{}}]},
+          "status":{"phase":"Running","qosClass":"Burstable","hostIP":"192.168.1.2","podIP":"10.1.0.9",
+            "initContainerStatuses":[{"name":"init","ready":true,"state":{"terminated":{"reason":"Completed","exitCode":0}}}],
+            "containerStatuses":[{"name":"pg","ready":true,"restartCount":3,"state":{"running":{"startedAt":"2026-11-02T00:00:00Z"}},
+              "lastState":{"terminated":{"reason":"OOMKilled","exitCode":137}}}]}}"#;
+        let d = parse_pod_detail(out).unwrap();
+        assert_eq!(d.owner, "StatefulSet/db");
+        assert_eq!(d.qos, "Burstable");
+        assert_eq!(d.containers_detail.len(), 2);
+        assert!(d.containers_detail[0].init);
+        assert_eq!(d.containers_detail[0].reason, "Completed");
+        let pg = &d.containers_detail[1];
+        assert_eq!(
+            (pg.state.as_str(), pg.restarts, pg.last.as_str()),
+            ("Running", 3, "OOMKilled (exit 137)")
+        );
+        assert!(pg.mounts[1].read_only);
+        assert_eq!(
+            d.volumes[0],
+            KubeVolume { name: "data".into(), kind: "PVC".into(), source: "data-db-0".into() }
+        );
+        assert_eq!(d.volumes[2].source, "serviceAccountToken, configMap");
+        assert_eq!(d.volumes[3].kind, "gitRepo");
+        assert_eq!(d.pod.status, "Running");
+        let json = serde_json::to_value(&d).unwrap();
+        assert_eq!(json["name"], "db-0", "pod fields are flattened");
     }
 
     #[cfg(unix)]
