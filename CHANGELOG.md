@@ -22,6 +22,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - Storage: Docker's disk use (images, containers, volumes, build cache, and how much can be reclaimed) along the
     bottom; clicking it lists every volume and image by size, which containers use each volume, and which volumes
     and images nothing uses.
+  - Image cleanup in the storage view: "Remove dangling" runs `docker image prune`; "Clean up unused…" lists the
+    images no container uses (stopped ones count as users), all ticked, so some can be kept, and removes exactly
+    those one by one without forcing, so an image a container started using in the meantime stays. Each unused
+    image also has its own remove button. The space freed is measured by Docker afterwards, and images that couldn't
+    be removed are listed with the reason.
   - Kubernetes: pick a context and namespace (the namespace can be typed when listing namespaces isn't allowed);
     pods show their status as `kubectl get pods` does (CrashLoopBackOff, Completed, Terminating…), ready count, age
     and restarts. The selected pod shows its node, IP, owner, QoS class and labels; each container with its image,

@@ -139,6 +139,8 @@ pub fn run() {
             ctr::docker_action,
             ctr::docker_disk,
             ctr::docker_storage,
+            ctr::docker_prune_dangling,
+            ctr::docker_remove_images,
             ctr::kube_pod,
             ctr::kube_logs,
             // files

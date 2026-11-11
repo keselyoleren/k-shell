@@ -85,11 +85,17 @@ async function loadInfo(quiet = false) {
     if (id === sel.value && !quiet) infoErr.value = String(e)
   }
 }
+const diskErr = ref('')
+const diskLoading = ref(false)
 async function loadDisk() {
+  diskLoading.value = true
   try {
     disk.value = await api.docker_disk({ host })
-  } catch {
-    disk.value = []
+    diskErr.value = ''
+  } catch (e) {
+    diskErr.value = String(e)
+  } finally {
+    diskLoading.value = false
   }
 }
 watch(sel, () => {
@@ -178,12 +184,86 @@ const volumeSize = (name) => storage.value?.volumes.find((v) => v.name === name)
 const volumes = computed(() =>
   (storage.value?.volumes || []).filter((v) => match(v.name, ...usersOf(v.name).map((c) => c.name))),
 )
-const images = computed(() =>
-  (storage.value?.images || []).filter((i) => match(i.name)).map((i) => ({ ...i, dangling: i.name === '<none>' })),
-)
+const images = computed(() => (storage.value?.images || []).filter((i) => match(i.name)))
+/** bytes in Docker's units (decimal: 1 GB = 1000 MB), like the sizes it prints */
+function si(n) {
+  if (!n) return '0B'
+  const u = ['B', 'kB', 'MB', 'GB', 'TB']
+  const i = Math.min(u.length - 1, Math.floor(Math.log10(n) / 3))
+  const v = n / 1000 ** i
+  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)}${u[i]}`
+}
 const unused = (list, key) => {
   const bytes = list.filter((x) => !x[key]).reduce((n, x) => n + x.bytes, 0)
-  return bytes ? fmtSize(bytes) : ''
+  return bytes ? si(bytes) : ''
+}
+
+// ---------- image cleanup ----------
+// Dangling images go through `docker image prune`. Unused tagged images are removed one by one,
+// exactly the ones ticked, without --force: an image a container still uses is refused.
+const imgRef = (i) => (i.dangling ? i.id : i.name)
+const danglingImages = computed(() => (storage.value?.images || []).filter((i) => i.dangling && !i.containers))
+const unusedImages = computed(() => (storage.value?.images || []).filter((i) => !i.dangling && !i.containers))
+const cleaning = ref(false)
+const cleanup = ref(null) // { picked: refs[], result }
+const picked = computed(() => unusedImages.value.filter((i) => cleanup.value?.picked.includes(imgRef(i))))
+function reloadStorage() {
+  loadStorage()
+  loadDisk()
+}
+async function pruneDangling() {
+  const n = danglingImages.value.length
+  const ok = await confirm(
+    `Remove ${n} dangling image${n === 1 ? '' : 's'}?`,
+    'Dangling images have no tag left (usually older builds of an image you rebuilt). No container uses them.',
+    { okText: 'Remove' },
+  )
+  if (!ok) return
+  cleaning.value = true
+  try {
+    const r = await api.docker_prune_dangling({ host })
+    toast(`Removed ${r.deleted} dangling image${r.deleted === 1 ? '' : 's'}, freed ${r.reclaimed || '0B'}`)
+  } catch (e) {
+    err(e)
+  } finally {
+    cleaning.value = false
+    reloadStorage()
+  }
+}
+async function removeImages(refs) {
+  cleaning.value = true
+  try {
+    return await api.docker_remove_images({ host, images: refs })
+  } finally {
+    cleaning.value = false
+    reloadStorage()
+  }
+}
+async function removeImage(i) {
+  const ok = await confirm(
+    `Remove ${i.dangling ? 'image ' + short(i.id) : i.name}?`,
+    'No container uses it. It has to be pulled or built again before it can be used.',
+    { okText: 'Remove' },
+  )
+  if (!ok) return
+  try {
+    const r = await removeImages([imgRef(i)])
+    if (r.failed.length) err(`Couldn't remove ${r.failed[0][0]}: ${r.failed[0][1]}`)
+    else toast(`Removed ${i.dangling ? short(i.id) : i.name}, freed ${si(r.freed_bytes)}`)
+  } catch (e) {
+    err(e)
+  }
+}
+const openCleanup = () => (cleanup.value = { picked: unusedImages.value.map(imgRef), result: null })
+function toggleAll(on) {
+  cleanup.value.picked = on ? unusedImages.value.map(imgRef) : []
+}
+async function runCleanup() {
+  try {
+    cleanup.value.result = await removeImages(picked.value.map(imgRef))
+  } catch (e) {
+    err(e)
+  }
 }
 
 // ================= Kubernetes =================
@@ -301,7 +381,8 @@ function refresh(quiet = false) {
   if (engine.value === 'docker') {
     loadDocker(quiet)
     loadInfo(quiet)
-    if (!quiet) loadDisk()
+    // the disk summary is not part of the regular refresh, unless it couldn't be read yet
+    if (!quiet || (!disk.value.length && !diskLoading.value)) loadDisk()
   } else if (kube.value.contexts) {
     loadPods(quiet)
     loadPod(quiet)
@@ -312,8 +393,8 @@ watch(
   (e) => {
     section.value = 'overview'
     if (e === 'docker' && !dk.value.list && !dk.value.loading) {
-      loadDocker()
-      loadDisk()
+      // one after the other: on an SSH host the first command opens the connection the rest share
+      loadDocker().then(loadDisk)
     }
     if (e === 'kube' && !kube.value.contexts && !kube.value.loading) loadContexts()
   },
@@ -473,11 +554,29 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
                 </tr>
               </tbody>
             </table>
-            <div class="stitle">
-              Images <span>{{ storage.images.length }}</span>
-              <span v-if="unused(storage.images, 'containers')" class="tag warn"
-                >{{ unused(storage.images, 'containers') }} in images no container uses</span
+            <div class="shead">
+              <div class="stitle">
+                Images <span>{{ storage.images.length }}</span>
+                <span v-if="unused(storage.images, 'containers')" class="tag warn"
+                  >{{ unused(storage.images, 'containers') }} in images no container uses</span
+                >
+              </div>
+              <button
+                class="btn sm"
+                :disabled="cleaning || !danglingImages.length"
+                @click="pruneDangling"
+                :title="danglingImages.length ? 'docker image prune' : 'No dangling images'"
               >
+                Remove dangling <span class="dim">{{ danglingImages.length }}</span>
+              </button>
+              <button
+                class="btn sm"
+                :disabled="cleaning || !unusedImages.length"
+                @click="openCleanup"
+                title="Choose unused images to remove"
+              >
+                <Icon name="trash" :size="12" /> Clean up unused… <span class="dim">{{ unusedImages.length }}</span>
+              </button>
             </div>
             <table class="tbl">
               <thead>
@@ -486,6 +585,7 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
                   <th class="num">Size</th>
                   <th>Containers</th>
                   <th>Created</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -500,6 +600,17 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
                     ><template v-else>{{ i.containers }}</template>
                   </td>
                   <td class="dim">{{ i.created }}</td>
+                  <td class="num">
+                    <button
+                      v-if="!i.containers"
+                      class="iconbtn rm"
+                      :disabled="cleaning"
+                      @click="removeImage(i)"
+                      title="Remove this image"
+                    >
+                      <Icon name="trash" :size="13" />
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -702,7 +813,7 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
       </section>
     </div>
 
-    <footer v-if="engine === 'docker' && disk.length" class="disk">
+    <footer v-if="engine === 'docker' && dk.list" class="disk">
       <button class="dlabel" :class="{ on: showStorage }" @click="openStorage" title="Show volumes and images by size">
         <Icon name="cube" :size="12" /> Storage
       </button>
@@ -716,6 +827,11 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
         <b>{{ DISK_NAMES[x.kind] || x.kind }}</b> {{ x.size }}
         <span v-if="reclaim(x.reclaimable)" class="free">{{ reclaim(x.reclaimable) }} reclaimable</span>
       </button>
+      <template v-if="!disk.length">
+        <span v-if="diskErr" class="derr" :title="diskErr">Couldn't read disk use: {{ diskErr.split('\n')[0] }}</span>
+        <span v-else class="dim">Measuring disk use…</span>
+        <button v-if="diskErr" class="btn sm" :disabled="diskLoading" @click="loadDisk">Retry</button>
+      </template>
     </footer>
 
     <!-- ===================== Kubernetes ===================== -->
@@ -893,6 +1009,61 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
           </div>
         </template>
       </section>
+    </div>
+    <div v-if="cleanup" class="overlay" @mousedown.self="!cleaning && (cleanup = null)">
+      <div class="modal cleanup">
+        <h2>Clean up unused images</h2>
+        <template v-if="!cleanup.result">
+          <p class="muted">
+            No container on {{ where }} uses these images. A removed image has to be pulled or built again before it can
+            be used. Images that a stopped container uses are kept and not listed.
+          </p>
+          <label class="pickall">
+            <input
+              type="checkbox"
+              :checked="picked.length === unusedImages.length"
+              :indeterminate.prop="picked.length > 0 && picked.length < unusedImages.length"
+              @change="toggleAll($event.target.checked)"
+            />
+            Select all
+          </label>
+          <div class="clist">
+            <label v-for="i in unusedImages" :key="imgRef(i)" class="citem">
+              <input type="checkbox" :value="imgRef(i)" v-model="cleanup.picked" />
+              <span class="mono cname" :title="i.name">{{ i.name }}</span>
+              <span class="dim">{{ i.created }}</span>
+              <span class="num mono">{{ i.size }}</span>
+            </label>
+          </div>
+          <p class="dim small">
+            {{ picked.length }} selected, {{ si(picked.reduce((n, i) => n + i.bytes, 0)) }} as listed. Images share
+            layers and Docker can count sizes differently, so the space actually freed is measured afterwards.
+          </p>
+          <div class="modal-foot">
+            <button class="btn" :disabled="cleaning" @click="cleanup = null">Cancel</button>
+            <button class="btn danger" :disabled="cleaning || !picked.length" @click="runCleanup">
+              {{ cleaning ? 'Removing…' : `Remove ${picked.length} image${picked.length === 1 ? '' : 's'}` }}
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <p>
+            Removed <b>{{ cleanup.result.removed.length }}</b> image{{
+              cleanup.result.removed.length === 1 ? '' : 's'
+            }}, freed <b>{{ si(cleanup.result.freed_bytes) }}</b
+            >.
+          </p>
+          <div v-if="cleanup.result.failed.length" class="fails">
+            <div class="dim small">Not removed:</div>
+            <div v-for="[name, why] in cleanup.result.failed" :key="name" class="fail">
+              <span class="mono">{{ name }}</span> <span class="why">{{ why }}</span>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn primary" @click="cleanup = null">Done</button>
+          </div>
+        </template>
+      </div>
     </div>
   </div>
 </template>
@@ -1399,6 +1570,12 @@ b.bad {
 .free {
   color: var(--warn);
 }
+.derr {
+  color: var(--danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60%;
+}
 .ip {
   margin-left: 6px;
 }
@@ -1426,6 +1603,76 @@ b.bad {
 }
 .tbl .tag {
   margin-right: 6px;
+}
+.shead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 18px 0 6px;
+}
+.shead .stitle {
+  margin: 0;
+  flex: 1;
+}
+.iconbtn.rm {
+  width: 22px;
+  height: 20px;
+  margin: -2px 0;
+  color: var(--text-3);
+}
+.iconbtn.rm:hover {
+  color: var(--danger);
+}
+.cleanup {
+  width: min(560px, calc(100vw - 40px));
+}
+.cleanup .muted {
+  margin-top: -4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.pickall {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--line);
+}
+.clist {
+  max-height: 300px;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+.citem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.cname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.small {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.fails {
+  margin-top: 8px;
+}
+.fail {
+  font-size: 12.5px;
+  padding: 4px 0;
+}
+.why {
+  color: var(--danger);
 }
 .note {
   font-size: 12px;

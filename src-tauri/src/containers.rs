@@ -7,7 +7,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
+
 use crate::error::Res;
+use crate::ssh::{Pool, SshConn};
+use crate::vault::{Host, Vault};
 
 /// Starts bash when the image has it, else sh.
 pub const PICK_SHELL: &str = "command -v bash >/dev/null && exec bash || exec sh";
@@ -563,6 +570,8 @@ pub struct Image {
     pub id: String,
     /// `nginx:1.27`, or `<none>` for a dangling image.
     pub name: String,
+    /// Untagged: no name refers to it any more (an image rebuilt under the same tag).
+    pub dangling: bool,
     pub size: String,
     pub bytes: u64,
     /// Containers created from it.
@@ -602,13 +611,11 @@ pub fn parse_docker_storage(out: &str) -> Res<Storage> {
         .iter()
         .map(|x| {
             let (repo, tag) = (s(x, "/Repository"), s(x, "/Tag"));
+            let dangling = repo.is_empty() || repo == "<none>" || tag.is_empty() || tag == "<none>";
             Image {
                 id: s(x, "/ID"),
-                name: if repo.is_empty() || repo == "<none>" {
-                    "<none>".into()
-                } else {
-                    format!("{repo}:{tag}")
-                },
+                name: if dangling { "<none>".into() } else { format!("{repo}:{tag}") },
+                dangling,
                 size: s(x, "/Size"),
                 bytes: size_bytes(&s(x, "/Size")),
                 containers: num(x, "/Containers"),
@@ -618,6 +625,56 @@ pub fn parse_docker_storage(out: &str) -> Res<Storage> {
         .collect();
     images.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
     Ok(Storage { volumes, images })
+}
+
+/// Remove dangling images: Docker's own cleanup, safe because nothing refers to them.
+pub fn docker_prune_dangling_argv() -> Vec<String> {
+    strings(&["docker", "image", "prune", "--force"])
+}
+
+/// What a prune removed: `deleted:` lines and the `Total reclaimed space:` Docker prints.
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct PruneResult {
+    pub deleted: usize,
+    pub reclaimed: String,
+}
+
+pub fn parse_prune(out: &str) -> PruneResult {
+    PruneResult {
+        deleted: out.lines().filter(|l| l.trim_start().to_lowercase().starts_with("deleted:")).count(),
+        reclaimed: out
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("Total reclaimed space:"))
+            .map(|r| r.trim().to_string())
+            .unwrap_or_default(),
+    }
+}
+
+/// Remove one image by `name:tag` (or ID for a dangling one), without `--force`: Docker refuses
+/// when a container, even a stopped one, still uses it.
+pub fn docker_image_rm_argv(image: &str) -> Res<Vec<String>> {
+    arg_ok("image", image)?;
+    Ok(strings(&["docker", "image", "rm", image]))
+}
+
+/// Why `docker image rm` refused, in words.
+pub fn image_rm_error(out: &str, code: i32, place: &str) -> String {
+    let low = out.to_lowercase();
+    if low.contains("is being used by") || low.contains("is using its referenced image") {
+        return "A container uses it (stopped containers count too); remove that container first.".into();
+    }
+    if low.contains("referenced in multiple repositories") {
+        return "It has several tags; remove each tag.".into();
+    }
+    if low.contains("no such image") {
+        return "Already gone.".into();
+    }
+    docker_error(out, code, place)
+}
+
+/// Bytes Docker counts for images (`docker system df`), to measure what a removal freed.
+pub fn images_bytes(df: &[DiskUsage]) -> u64 {
+    df.iter().find(|d| d.kind == "Images").map_or(0, |d| size_bytes(&d.size))
 }
 
 /// What went wrong running a `docker` command, in words.
@@ -1020,6 +1077,67 @@ fn first_lines(out: &str, code: i32) -> String {
     }
 }
 
+// ---------- SSH connection ----------
+
+/// How long a host's connection stays open after the tab's last command.
+const KEEP_FOR: Duration = Duration::from_secs(120);
+
+/// Connections the Containers tab uses, with when they were last used. The pool only keeps a
+/// connection while something holds it, and the tab refreshes every few seconds: without this
+/// each refresh would be a new SSH handshake (and a new password or 2FA prompt).
+static KEPT: LazyLock<Mutex<HashMap<String, Kept>>> = LazyLock::new(Default::default);
+/// A connection and when the tab last used it.
+type Kept = (Arc<SshConn>, Instant);
+
+/// One connection attempt at a time, so the tab's first commands, sent together, share one
+/// connection instead of each opening its own.
+static CONNECTING: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
+
+fn kept(id: &str) -> Option<Arc<SshConn>> {
+    let mut k = KEPT.lock();
+    match k.get_mut(id) {
+        Some((c, used)) if !c.handle.is_closed() => {
+            *used = Instant::now();
+            Some(c.clone())
+        }
+        Some(_) => {
+            k.remove(id);
+            None
+        }
+        None => None,
+    }
+}
+
+/// The SSH connection for the Containers tab's commands on `h`: shared, kept open for a while
+/// after the last use.
+pub async fn shared_conn(pool: &Pool, vault: &Arc<Vault>, h: &Host) -> Res<Arc<SshConn>> {
+    if let Some(c) = kept(&h.id) {
+        return Ok(c);
+    }
+    let _one = CONNECTING.lock().await;
+    if let Some(c) = kept(&h.id) {
+        return Ok(c); // connected while this call waited
+    }
+    let c = pool.get(vault, h).await?;
+    KEPT.lock().insert(h.id.clone(), (c.clone(), Instant::now()));
+    // close it once the tab has stopped using it
+    let id = h.id.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(KEEP_FOR / 4).await;
+            let mut k = KEPT.lock();
+            match k.get(&id) {
+                Some((c, used)) if used.elapsed() < KEEP_FOR && !c.handle.is_closed() => {}
+                _ => {
+                    k.remove(&id);
+                    break;
+                }
+            }
+        }
+    });
+    Ok(c)
+}
+
 // ---------- running commands on this computer ----------
 
 /// A login shell to run a command line in, so PATH has what the user's terminal has
@@ -1231,8 +1349,29 @@ mod tests {
         assert_eq!(st.volumes[0].name, "abc123", "largest first");
         assert!(st.volumes[0].anonymous && st.volumes[0].links == 0);
         assert_eq!(st.images[0].name, "<none>");
+        assert!(st.images[0].dangling && !st.images[1].dangling);
         assert_eq!(st.images[1].name, "nginx:1.27");
         assert_eq!(st.images[1].containers, 1);
+    }
+
+    #[test]
+    fn image_cleanup() {
+        let out = "Deleted Images:\nuntagged: foo@sha256:1\ndeleted: sha256:aaa\ndeleted: sha256:bbb\n\nTotal reclaimed space: 1.2GB\n";
+        assert_eq!(parse_prune(out), PruneResult { deleted: 2, reclaimed: "1.2GB".into() });
+        assert_eq!(
+            parse_prune("Total reclaimed space: 0B"),
+            PruneResult { deleted: 0, reclaimed: "0B".into() }
+        );
+        assert_eq!(
+            docker_image_rm_argv("nginx:1.27").unwrap(),
+            strings(&["docker", "image", "rm", "nginx:1.27"])
+        );
+        assert!(docker_image_rm_argv("-f").is_err());
+        let used = "Error response from daemon: conflict: unable to remove repository reference \"nginx\" (must force) - container 1a2b is using its referenced image 3c4d";
+        assert!(image_rm_error(used, 1, "here").contains("A container uses it"));
+        assert!(image_rm_error("Error: No such image: x", 1, "here").contains("Already gone"));
+        let df = vec![DiskUsage { kind: "Images".into(), size: "1.5GB".into(), ..Default::default() }];
+        assert_eq!(images_bytes(&df), 1_500_000_000);
     }
 
     #[test]

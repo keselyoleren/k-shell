@@ -585,6 +585,28 @@ async fn end_to_end() {
         }
     );
 
+    // Image removal: an extra tag goes, an image a container uses is refused (nothing forced).
+    let tag = "kshell-e2e-remove:1".to_string();
+    let (out, code) = check!(
+        "tag a test image",
+        containers::run_local(&["docker".into(), "tag".into(), "busybox:1.36".into(), tag.clone()])
+    );
+    assert_eq!(code, 0, "{out}");
+    let (out, code) =
+        check!("remove the tag", containers::run_local(&containers::docker_image_rm_argv(&tag).unwrap()));
+    check!("tag removed", if code == 0 { Ok(()) } else { Err(out) });
+    let (out, code) = check!(
+        "remove an image in use",
+        containers::run_local(&containers::docker_image_rm_argv("busybox:1.36").unwrap())
+    );
+    check!(
+        "in-use image is refused",
+        match containers::image_rm_error(&out, code, "here") {
+            m if code != 0 && m.starts_with("A container uses it") => Ok(()),
+            m => Err(format!("{code}: {m}")),
+        }
+    );
+
     // The SSH test server has no Docker: listing over SSH says so.
     let (out, code) =
         check!("docker ps over ssh", conn.exec(&containers::sh_join(&containers::docker_ps())).await);

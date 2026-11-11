@@ -90,7 +90,9 @@ PATH matches the user's terminal), a host runs it over its pooled SSH connection
 | `docker_logs` | `host, id, tail` | the last `tail` lines (1–5000) with timestamps, stdout and stderr in time order |
 | `docker_action` | `host, id, action: "start" \| "stop" \| "restart"` | – |
 | `docker_disk` | `host` | `docker system df`: `[{ kind, total, active, size, reclaimable }]` |
-| `docker_storage` | `host` | `docker system df --verbose`: `{ volumes: [{ name, size, bytes, links, driver, anonymous }], images: [{ id, name, size, bytes, containers, created }] }`, largest first |
+| `docker_storage` | `host` | `docker system df --verbose`: `{ volumes: [{ name, size, bytes, links, driver, anonymous }], images: [{ id, name, dangling, size, bytes, containers, created }] }`, largest first |
+| `docker_prune_dangling` | `host` | `docker image prune --force`: `{ deleted, reclaimed }` (`reclaimed` as Docker prints it) |
+| `docker_remove_images` | `host, images: string[]` (`name:tag`, or ID for a dangling image) | `{ removed: string[], failed: [[image, reason]], freed_bytes }`; one `docker image rm` each, never forced; `freed_bytes` is Docker's image total before minus after |
 | `kube_contexts` | `host` | `{ contexts: string[], current }` (`current` empty when none is set) |
 | `kube_namespaces` | `host, context` | namespace names (empty `context`: kubectl's current one) |
 | `kube_pods` | `host, context, namespace` | `[{ name, status, ready: "1/2", restarts, started, node, ip, containers: string[] }]`; `status` as `kubectl get pods` shows it |

@@ -17,7 +17,7 @@ fn place(host: Option<&Host>) -> String {
 async fn run(st: &State<'_>, host: Option<&Host>, argv: Vec<String>) -> Res<(String, i32)> {
     match host {
         Some(h) => {
-            let conn = st.pool.get(&st.vault, h).await?;
+            let conn = c::shared_conn(&st.pool, &st.vault, h).await?;
             let (out, code) = conn.exec(&c::sh_join(&argv)).await?;
             Ok((out, code as i32))
         }
@@ -41,7 +41,7 @@ pub async fn kube_contexts(st: State<'_>, host: Option<Host>) -> Res<KubeContext
     let where_ = place(host.as_ref());
     match host {
         Some(h) => {
-            let conn = st.pool.get(&st.vault, &h).await?;
+            let conn = c::shared_conn(&st.pool, &st.vault, &h).await?;
             let (out, code) = conn.exec(&c::kube_contexts_cmd()).await?;
             if code != 0 {
                 return Err(c::kube_error(&out, code as i32, &where_));
@@ -182,4 +182,51 @@ pub async fn docker_storage(st: State<'_>, host: Option<Host>) -> Res<c::Storage
         return Err(c::docker_error(&out, code, &place(host.as_ref())));
     }
     c::parse_docker_storage(&out)
+}
+
+/// Remove dangling images (`docker image prune --force`).
+#[tauri::command]
+pub async fn docker_prune_dangling(st: State<'_>, host: Option<Host>) -> Res<c::PruneResult> {
+    let (out, code) = run(&st, host.as_ref(), c::docker_prune_dangling_argv()).await?;
+    if code != 0 {
+        return Err(c::docker_error(&out, code, &place(host.as_ref())));
+    }
+    Ok(c::parse_prune(&out))
+}
+
+/// Result of removing a list of images: which failed and why, and the space Docker counts as
+/// freed (its image total before minus after).
+#[derive(serde::Serialize)]
+pub struct RemoveResult {
+    pub removed: Vec<String>,
+    /// `[image, reason]`
+    pub failed: Vec<(String, String)>,
+    pub freed_bytes: u64,
+}
+
+/// Remove exactly these images, one at a time and without `--force`, so an image that a
+/// container started using since the list was shown is kept.
+#[tauri::command]
+pub async fn docker_remove_images(
+    st: State<'_>,
+    host: Option<Host>,
+    images: Vec<String>,
+) -> Res<RemoveResult> {
+    let where_ = place(host.as_ref());
+    let measure =
+        |out: &(String, i32)| if out.1 == 0 { c::images_bytes(&c::parse_docker_df(&out.0)) } else { 0 };
+    let before = run(&st, host.as_ref(), c::docker_df_argv()).await.map(|o| measure(&o)).unwrap_or(0);
+    let mut res = RemoveResult { removed: vec![], failed: vec![], freed_bytes: 0 };
+    for image in images {
+        match run(&st, host.as_ref(), c::docker_image_rm_argv(&image)?).await {
+            Ok((_, 0)) => res.removed.push(image),
+            Ok((out, code)) => res.failed.push((image, c::image_rm_error(&out, code, &where_))),
+            Err(e) => res.failed.push((image, e)),
+        }
+    }
+    if !res.removed.is_empty() {
+        let after = run(&st, host.as_ref(), c::docker_df_argv()).await.map(|o| measure(&o)).unwrap_or(before);
+        res.freed_bytes = before.saturating_sub(after);
+    }
+    Ok(res)
 }
