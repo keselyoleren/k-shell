@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-11
+
 ### Added
 - A Containers tab for Docker and Kubernetes, on this computer ("Containers" in the sidebar, "Docker containers" /
   "Kubernetes pods" in the command palette) or on an SSH host ("Docker containers…" / "Kubernetes pods…" in its
