@@ -16,6 +16,7 @@ import Overlays from './components/Overlays.vue'
 const lazy = (load) => defineAsyncComponent({ loader: load, delay: 0 })
 const TerminalLayer = lazy(() => import('./components/TerminalLayer.vue'))
 const SftpTab = lazy(() => import('./components/SftpTab.vue'))
+const CastPlayer = lazy(() => import('./components/CastPlayer.vue'))
 const HostEditor = lazy(() => import('./components/HostEditor.vue'))
 const Palette = lazy(() => import('./components/Palette.vue'))
 
@@ -75,7 +76,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
         </div>
         <template v-for="t in store.tabs" :key="t.id">
           <div v-if="t.kind !== 'term'" class="pane-wrap" v-show="store.active === t.id">
-            <SftpTab :tab="t" />
+            <CastPlayer v-if="t.kind === 'cast'" :tab="t" :visible="store.active === t.id" />
+            <SftpTab v-else :tab="t" />
           </div>
         </template>
       </section>

@@ -196,7 +196,7 @@ const updateLabel = computed(() => {
           class="dot"
           :style="{ background: t.color || (t.kind === 'sftp' ? 'var(--accent-2)' : 'var(--accent)') }"
         ></span>
-        <Icon :name="t.kind === 'sftp' ? 'folder' : 'terminal'" :size="13" />
+        <Icon :name="t.kind === 'sftp' ? 'folder' : t.kind === 'cast' ? 'play' : 'terminal'" :size="13" />
         <span v-if="t.broadcast" class="bcast" title="Broadcasting input to the panes of this tab"
           ><Icon name="broadcast" :size="12"
         /></span>

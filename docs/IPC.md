@@ -64,6 +64,11 @@ const entries = await api.fs_list({ id, path: '/var/log' })
 | `key_install` | `host, keyId` | – (appends the public key to `authorized_keys`) |
 | `log_dir` | – | session-log folder (from the settings, or `Documents/K-Shell Logs`) |
 | `log_dir_open` | – | – (creates the folder and opens it in the OS file manager) |
+| `rec_start` | `id, label, cols, rows` | path of the new `.cast` file in the session-log folder (asciicast v2 header written) |
+| `rec_write` | `id, events: [[seconds, "o" \| "r", data]]` | – (appends the events; other event types are dropped) |
+| `rec_stop` | `id, events` | path (writes the last events and closes the file) |
+| `rec_reveal` | `path` | – (shows the file in the OS file manager) |
+| `cast_read` | `path` | file text, for the player (up to 256 MB) |
 
 `id` is chosen by the UI (a UUID). On the `onData` channel:
 

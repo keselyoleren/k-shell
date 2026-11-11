@@ -29,6 +29,10 @@ function done(v) {
   store.dialog = null
   d?.resolve(v)
 }
+function toastAction(t, a) {
+  store.toasts = store.toasts.filter((x) => x.id !== t.id)
+  a.run()
+}
 function run(item) {
   store.menu = null
   item.action?.()
@@ -37,9 +41,14 @@ function run(item) {
 
 <template>
   <div class="toasts">
-    <div v-for="t in store.toasts" :key="t.id" class="toast" :class="t.kind">
+    <div v-for="t in store.toasts" :key="t.id" class="toast" :class="[t.kind, { acts: t.actions?.length }]">
       <Icon :name="t.kind === 'error' ? 'info' : 'check'" :size="15" />
-      <span>{{ t.msg }}</span>
+      <div class="tmsg">
+        <span>{{ t.msg }}</span>
+        <div v-if="t.actions?.length" class="tacts">
+          <button v-for="a in t.actions" :key="a.label" class="btn sm" @click="toastAction(t, a)">{{ a.label }}</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -146,6 +155,20 @@ export default {
   -webkit-user-select: text;
   user-select: text;
   pointer-events: auto;
+}
+.toast.acts {
+  pointer-events: auto;
+}
+.tmsg {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  word-break: break-word;
+}
+.tacts {
+  display: flex;
+  gap: 6px;
 }
 .toast .icon {
   margin-top: 2px;

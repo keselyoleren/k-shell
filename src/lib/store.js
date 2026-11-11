@@ -40,9 +40,10 @@ export async function loadVault() {
   store.activeForwards = await api.forward_active()
 }
 
-export function toast(msg, kind = 'info', ms = 3500) {
+/** actions: optional buttons `{ label, run }` shown in the toast (it then stays a little longer). */
+export function toast(msg, kind = 'info', ms = 3500, actions = null) {
   const id = uid()
-  store.toasts.push({ id, msg: String(msg), kind })
+  store.toasts.push({ id, msg: String(msg), kind, actions })
   setTimeout(() => {
     store.toasts = store.toasts.filter((t) => t.id !== id)
   }, ms)
@@ -130,6 +131,18 @@ export function openSftp(host = null, paths = null) {
     color: host?.color || '',
     ...(paths?.left || paths?.right ? { paths } : {}),
   }
+  store.tabs.push(tab)
+  store.active = tab.id
+  return tab
+}
+
+/** Play a terminal recording (`.cast` file) in its own tab. */
+export function openCast(path) {
+  const name = path
+    .split(/[\\/]/)
+    .pop()
+    .replace(/\.cast$/i, '')
+  const tab = { id: uid(), kind: 'cast', title: name, path, color: '' }
   store.tabs.push(tab)
   store.active = tab.id
   return tab
@@ -339,6 +352,11 @@ export function setTabName(tab, name) {
 }
 function autoTitle(tab) {
   if (tab.kind === 'sftp') return tab.host ? tab.host.label || tab.host.host : 'File Manager'
+  if (tab.kind === 'cast')
+    return tab.path
+      .split(/[\\/]/)
+      .pop()
+      .replace(/\.cast$/i, '')
   const t = firstLeaf(tab.root).target
   return t.kind === 'local' ? t.title || 'Local' : t.host.label || t.host.host
 }
@@ -364,13 +382,16 @@ function snapNode(n) {
 }
 function snapshot() {
   if (!store.vault.settings.restore_tabs) return null
-  const tabs = store.tabs.map((t) => ({
-    kind: t.kind,
-    title: t.title,
-    renamed: !!t.renamed,
-    color: t.color,
-    ...(t.kind === 'sftp' ? { host: hostRef(t.host) } : { root: snapNode(t.root) }),
-  }))
+  // recordings being played aren't reopened
+  const tabs = store.tabs
+    .filter((t) => t.kind !== 'cast')
+    .map((t) => ({
+      kind: t.kind,
+      title: t.title,
+      renamed: !!t.renamed,
+      color: t.color,
+      ...(t.kind === 'sftp' ? { host: hostRef(t.host) } : { root: snapNode(t.root) }),
+    }))
   return { tabs, active: store.tabs.findIndex((t) => t.id === store.active) }
 }
 
