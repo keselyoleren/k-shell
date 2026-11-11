@@ -28,6 +28,9 @@ pub struct ShellOptions {
     /// Typed into the shell right after it starts (e.g. `tmux attach`).
     pub startup_command: String,
     pub agent_forward: bool,
+    /// Run this command instead of the login shell (a shell in a container); the startup
+    /// command is then not typed.
+    pub command: Option<String>,
     /// Plain-text copy of the output, when session logging is on.
     pub log: Option<crate::sessionlog::SessionLog>,
 }
@@ -41,6 +44,9 @@ pub struct LocalOptions {
     pub cwd: Option<String>,
     /// Typed into the shell right after it starts (e.g. `npm run dev`).
     pub startup_command: String,
+    /// Run this program and arguments instead of the shell (a shell in a container). On Unix it
+    /// runs through a login shell so PATH has what the user's terminal has.
+    pub command: Option<Vec<String>>,
     /// Plain-text copy of the output, when session logging is on.
     pub log: Option<crate::sessionlog::SessionLog>,
 }
@@ -167,8 +173,12 @@ impl Terminals {
         ch.request_pty(false, "xterm-256color", opts.cols as u32, opts.rows as u32, 0, 0, &[])
             .await
             .ctx("request pty")?;
-        ch.request_shell(true).await.ctx("request shell")?;
-        if !opts.startup_command.trim().is_empty() {
+        if let Some(cmd) = opts.command.as_deref() {
+            ch.exec(true, cmd).await.ctx("run command")?;
+        } else {
+            ch.request_shell(true).await.ctx("request shell")?;
+        }
+        if opts.command.is_none() && !opts.startup_command.trim().is_empty() {
             let mut s = opts.startup_command.trim_end().to_string();
             s.push('\n');
             let _ = ch.data(s.as_bytes()).await;
@@ -227,16 +237,25 @@ impl Terminals {
         opts: LocalOptions,
         out: Channel<InvokeResponseBody>,
     ) -> Res<()> {
-        let LocalOptions { cols, rows, shell, cwd, startup_command, mut log } = opts;
+        let LocalOptions { cols, rows, shell, cwd, mut startup_command, command, mut log } = opts;
         use portable_pty::{native_pty_system, CommandBuilder, PtySize};
         let pty = native_pty_system();
         let pair = pty.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }).s()?;
-        let shell = shell.filter(|s| !s.is_empty()).unwrap_or_else(default_shell);
-        let mut cmd = CommandBuilder::new(&shell);
-        #[cfg(unix)]
-        if shell.ends_with("sh") {
-            cmd.arg("-l");
-        }
+        let mut cmd = match command.filter(|a| !a.is_empty()) {
+            Some(argv) => {
+                startup_command.clear();
+                program(&argv)
+            }
+            None => {
+                let shell = shell.filter(|s| !s.is_empty()).unwrap_or_else(default_shell);
+                let mut cmd = CommandBuilder::new(&shell);
+                #[cfg(unix)]
+                if shell.ends_with("sh") {
+                    cmd.arg("-l");
+                }
+                cmd
+            }
+        };
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         match cwd.as_deref().filter(|c| !c.trim().is_empty()) {
@@ -438,6 +457,23 @@ impl Terminals {
             send_event(&out, json!({"type": "exit", "code": null}));
         });
         Ok(())
+    }
+}
+
+/// A program with arguments for a PTY: through a login shell on Unix (`exec`, so the program
+/// gets the terminal and its exit ends the tab), directly on Windows.
+fn program(argv: &[String]) -> portable_pty::CommandBuilder {
+    #[cfg(unix)]
+    {
+        let mut c = portable_pty::CommandBuilder::new(crate::containers::login_shell());
+        c.args(["-l", "-c", &format!("exec {}", crate::containers::sh_join(argv))]);
+        c
+    }
+    #[cfg(windows)]
+    {
+        let mut c = portable_pty::CommandBuilder::new(&argv[0]);
+        c.args(&argv[1..]);
+        c
     }
 }
 

@@ -47,8 +47,8 @@ const entries = await api.fs_list({ id, path: '/var/log' })
 
 | Command | Arguments | Returns |
 |---|---|---|
-| `term_open_ssh` | `id, host, cols, rows, onData: Channel` | – |
-| `term_open_local` | `id, cols, rows, shell?: string, cwd?: string, startupCommand?: string, onData: Channel` | – (error if `cwd` doesn't exist; `~` is expanded) |
+| `term_open_ssh` | `id, host, cols, rows, container?: Shell, onData: Channel` | – (with `container`, runs its `docker exec` / `kubectl exec` instead of the login shell; the startup command is skipped) |
+| `term_open_local` | `id, cols, rows, shell?: string, cwd?: string, startupCommand?: string, container?: Shell, onData: Channel` | – (error if `cwd` doesn't exist; `~` is expanded; with `container`, runs its command through a login shell on macOS/Linux, directly on Windows) |
 | `term_open_telnet` | `id, host, cols, rows, onData: Channel` | – (address and port from `host`; window size sent with NAWS) |
 | `term_open_serial` | `id, host, onData: Channel` | – (`host.host` is the device; `baud_rate`, `data_bits`, `parity`, `stop_bits`, `flow_control` from the host) |
 | `serial_ports` | – | `[{ name, description }]` |
@@ -76,6 +76,24 @@ const entries = await api.fs_list({ id, path: '/var/log' })
 - when the shell ends, a JSON message `{ "type": "exit", "code": number | null }` arrives.
 
 SSH connections are pooled per host id, so several terminals to one host share one TCP connection.
+
+## Docker and Kubernetes: `commands/containers.rs`
+
+`host: Host | null`: null runs `docker` / `kubectl` on this computer (through a login shell on macOS/Linux, so
+PATH matches the user's terminal), a host runs it over its pooled SSH connection.
+
+| Command | Arguments | Returns |
+|---|---|---|
+| `docker_containers` | `host` | `[{ id, name, image, status, ports }]` from `docker ps` (running containers); errors say when Docker isn't installed, the daemon isn't running or the Docker socket is permission denied |
+| `kube_contexts` | `host` | `{ contexts: string[], current }` (`current` empty when none is set) |
+| `kube_namespaces` | `host, context` | namespace names (empty `context`: kubectl's current one) |
+| `kube_pods` | `host, context, namespace` | `[{ name, phase, ready: "1/2", containers: string[] }]` (`phase` is `Terminating` for a pod being deleted) |
+
+`Shell` (the `container` argument of `term_open_ssh` / `term_open_local`) is
+`{ engine: "docker", id }` → `docker exec -it <id> sh -c 'command -v bash >/dev/null && exec bash || exec sh'`, or
+`{ engine: "kube", context?, namespace, pod, container? }` →
+`kubectl --context=<context> -n <namespace> exec -it <pod> -c <container> -- sh -c '…'` (same shell choice).
+Names starting with `-` are rejected.
 
 ## Files: `commands/files.rs`
 

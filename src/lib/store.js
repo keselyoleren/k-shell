@@ -22,6 +22,7 @@ export const store = reactive({
   activeForwards: [],
   toasts: [],
   palette: false,
+  containers: null, // { host, tab: 'docker' | 'kube' } while the container list is open (host null: this computer)
   editor: null, // { host } when host drawer is open
   dialog: null, // generic prompt/confirm dialog
   menu: null,
@@ -114,6 +115,30 @@ export function openWorkspace(ws) {
   const tabs = (ws.projects || []).map((p) => openProject(ws, p))
   if (tabs[0]) store.active = tabs[0].id
   return tabs
+}
+
+/** Title of a terminal target: a container's or project's own title, else the host's name. */
+export function targetTitle(t) {
+  if (t.container || t.kind === 'local') return t.title || 'Local'
+  return t.host.label || t.host.host
+}
+
+/** Show the Docker containers / Kubernetes pods of a host (null: this computer). */
+export function openContainers(host = null, tab = 'docker') {
+  store.containers = { host: host ? { ...host } : null, tab }
+}
+
+/**
+ * Open a shell in a container as a terminal tab: a local terminal running docker/kubectl here, or
+ * an SSH terminal running it on the host. shell: { engine: 'docker', id } or
+ * { engine: 'kube', context, namespace, pod, container }.
+ */
+export function openContainerShell(host, shell, name) {
+  const title = host ? `${name} · ${host.label || host.host}` : name
+  const target = host
+    ? { kind: 'ssh', host: { ...host }, container: shell, title }
+    : { kind: 'local', container: shell, title }
+  return openTerminal(target, title)
 }
 
 export function connectHost(host) {
@@ -282,7 +307,7 @@ export function detachPane(tab, paneId) {
   const nt = {
     id: uid(),
     kind: 'term',
-    title: t.kind === 'local' ? t.title || 'Local' : t.host.label || t.host.host,
+    title: targetTitle(t),
     root: moved,
     focus: moved.id,
     color: t.host?.color || tab.color || '',
@@ -358,7 +383,7 @@ function autoTitle(tab) {
       .pop()
       .replace(/\.cast$/i, '')
   const t = firstLeaf(tab.root).target
-  return t.kind === 'local' ? t.title || 'Local' : t.host.label || t.host.host
+  return targetTitle(t)
 }
 
 // ---------- session: reopen the tabs of the last run ----------
@@ -375,10 +400,11 @@ function snapNode(n) {
   const last = n.cwd ? { cwd: n.cwd } : {} // last folder the shell reported
   if (n.stats) last.stats = true // server stats panel open
   if (t.kind === 'local') {
-    const { cwd, startup_command, title, workspace } = t
-    return { type: 'leaf', ...last, target: { kind: 'local', cwd, startup_command, title, workspace } }
+    const { cwd, startup_command, title, workspace, container } = t
+    return { type: 'leaf', ...last, target: { kind: 'local', cwd, startup_command, title, workspace, container } }
   }
-  return { type: 'leaf', ...last, target: { kind: 'ssh', host: hostRef(t.host) } }
+  const ct = t.container ? { container: t.container, title: t.title } : {}
+  return { type: 'leaf', ...last, target: { kind: 'ssh', host: hostRef(t.host), ...ct } }
 }
 function snapshot() {
   if (!store.vault.settings.restore_tabs) return null
@@ -402,7 +428,8 @@ function buildNode(n) {
     return { type: 'split', id: uid(), dir: n.dir, ratio: n.ratio || 0.5, children: kids }
   }
   const h = n.target?.kind === 'local' ? null : hostOf(n.target?.host)
-  const l = n.target?.kind === 'local' ? leaf({ ...n.target }) : h ? leaf({ kind: 'ssh', host: { ...h } }) : null
+  const ct = n.target?.container ? { container: n.target.container, title: n.target.title } : {}
+  const l = n.target?.kind === 'local' ? leaf({ ...n.target }) : h ? leaf({ kind: 'ssh', host: { ...h }, ...ct }) : null
   if (l && n.cwd) l.cwd = n.cwd
   if (l && n.stats) l.stats = true
   return l

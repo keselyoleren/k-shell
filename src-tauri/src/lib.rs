@@ -6,10 +6,12 @@
 //! * `terminal`  — SSH shells and local PTYs
 //! * `fs/`       — one file-system API over Local / SFTP / FTP(S) / S3
 //! * `forward`   — -L / -R / -D port forwarding
+//! * `containers` — Docker containers and Kubernetes pods (list, shell command)
 //! * `keys`, `ssh_config` — key generation/import, `~/.ssh/config` import
 
 pub mod cast;
 pub mod commands;
+pub mod containers;
 pub mod error;
 pub mod forward;
 pub mod fs;
@@ -26,7 +28,7 @@ pub mod vault;
 
 use tauri::Manager;
 
-use commands::{files, forwards, system, terminal as term, vault as v};
+use commands::{containers as ctr, files, forwards, system, terminal as term, vault as v};
 
 /// macOS menu bar. It mirrors Tauri's default menu but leaves out
 /// "Close Window" (⌘W), so ⌘W reaches the UI and closes the current tab
@@ -126,6 +128,11 @@ pub fn run() {
             term::cast_read,
             term::host_stats,
             term::key_install,
+            // docker & kubernetes
+            ctr::docker_containers,
+            ctr::kube_contexts,
+            ctr::kube_namespaces,
+            ctr::kube_pods,
             // files
             files::fs_open,
             files::fs_close,

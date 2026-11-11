@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- Open a shell in a Docker container or a Kubernetes pod without typing `docker exec` / `kubectl exec`. "Containers"
+  in the sidebar (or "Docker containers" / "Kubernetes pods" in the command palette) lists them on this computer;
+  "Docker containers…" and "Kubernetes pods…" in a host's context menu list them on that SSH host. The Docker list
+  shows each running container's name, image, status and ports, with search; a click opens a terminal tab that runs
+  bash in the container, or sh when the image has no bash. The Kubernetes list picks a context and namespace (the
+  namespace can be typed when listing namespaces isn't allowed) and shows the pods with their phase and ready count;
+  a pod with several containers has a button for each. When Docker isn't installed, its daemon isn't running or the
+  user can't reach the Docker socket, the list says so instead of showing raw output. Container tabs are reopened
+  on launch like other terminals. (#55)
 - Record a terminal pane to an asciinema file (`.cast`, asciicast v2) that plays in `asciinema play`, on
   asciinema.org or through agg for a GIF. Start and stop from the pane menu or the command palette ("Start / stop
   recording", no default shortcut); a red REC badge with the elapsed time shows while it runs and stops it when

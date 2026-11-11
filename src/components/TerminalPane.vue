@@ -25,6 +25,7 @@ import {
   toast,
   err,
   openCast,
+  targetTitle,
 } from '../lib/store'
 import { termTheme } from '../lib/appearance'
 import { actionFor, withHint } from '../lib/keymap'
@@ -48,9 +49,7 @@ const searchInput = ref(null)
 const target = props.leaf.target
 /** local | ssh | telnet | serial */
 const proto = target.kind === 'local' ? 'local' : target.host.protocol || 'ssh'
-const title = computed(() =>
-  target.kind === 'local' ? target.title || 'Local' : target.host.label || target.host.host,
-)
+const title = computed(() => targetTitle(target))
 const focused = computed(() => props.tab.focus === props.leaf.id)
 const showStats = computed(() => proto === 'ssh' && !!props.leaf.stats)
 /** This pane sends and receives broadcast input. */
@@ -178,6 +177,7 @@ function injectionPlan() {
   const s = S()
   const local = target.kind === 'local'
   if (proto === 'telnet' || proto === 'serial') return null // a device's console, not a shell we know
+  if (target.container) return null // a container's sh may not be bash/zsh, and a cd would miss
   // Only into a plain bash/zsh login shell: a startup command (tmux attach, sudo -i…) would
   // receive the line instead.
   const safe = local
@@ -335,6 +335,7 @@ async function connect() {
         // last folder the shell reported (reconnect, reopened tab), else where it was opened
         cwd: props.leaf.cwd || target.cwd || S().local_cwd?.trim() || null,
         startupCommand: target.startup_command || null,
+        container: target.container || null,
         onData: ch,
       })
     } else if (proto === 'telnet') {
@@ -352,7 +353,8 @@ async function connect() {
       term.write(
         `\x1b[2mConnecting to ${target.host.username ? target.host.username + '@' : ''}${target.host.host}…\x1b[0m\r\n`,
       )
-      await api.term_open_ssh({ id, host: target.host, cols: term.cols, rows: term.rows, onData: ch })
+      const container = target.container || null
+      await api.term_open_ssh({ id, host: target.host, cols: term.cols, rows: term.rows, container, onData: ch })
       const saved = store.vault.hosts.find((h) => h.id === target.host.id)
       if (saved && !saved.os)
         api

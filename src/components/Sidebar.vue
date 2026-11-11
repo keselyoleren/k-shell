@@ -1,5 +1,5 @@
 <script setup>
-import { store, openLocal, openSftp, toggleSidebar } from '../lib/store'
+import { store, openLocal, openSftp, openContainers, toggleSidebar } from '../lib/store'
 import { withHint } from '../lib/keymap'
 import Icon from './Icon.vue'
 import Logo from './Logo.vue'
@@ -47,6 +47,7 @@ function go(id) {
       <div class="sep"></div>
       <button @click="openLocal()"><Icon name="terminal" /> <span>Local Terminal</span></button>
       <button @click="openSftp()"><Icon name="folder" /> <span>File Manager</span></button>
+      <button @click="openContainers()"><Icon name="cube" /> <span>Containers</span></button>
     </nav>
     <div class="grow"></div>
     <nav>

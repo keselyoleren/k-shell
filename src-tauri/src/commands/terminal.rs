@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use tauri::ipc::{Channel, InvokeResponseBody};
 
 use super::State;
+use crate::containers::Shell;
 use crate::error::Res;
 use crate::terminal::{Cmd, LocalOptions, ShellOptions, TelnetOptions};
 use crate::vault::Host;
@@ -17,9 +18,11 @@ pub async fn term_open_ssh(
     host: Host,
     cols: u16,
     rows: u16,
+    container: Option<Shell>,
     on_data: Channel<InvokeResponseBody>,
 ) -> Res<()> {
     let label = if host.label.is_empty() { host.host.clone() } else { host.label.clone() };
+    let command = container.map(|c| c.argv()).transpose()?.map(|a| crate::containers::sh_join(&a));
     let log = session_log(&st, &label);
     let conn = st.pool.get(&st.vault, &host).await?;
     st.terminals
@@ -31,6 +34,7 @@ pub async fn term_open_ssh(
                 rows,
                 startup_command: host.startup_command,
                 agent_forward: host.agent_forward,
+                command,
                 log,
             },
             on_data,
@@ -48,11 +52,20 @@ pub fn term_open_local(
     shell: Option<String>,
     cwd: Option<String>,
     startup_command: Option<String>,
+    container: Option<Shell>,
     on_data: Channel<InvokeResponseBody>,
 ) -> Res<()> {
+    let command = container.map(|c| c.argv()).transpose()?;
     let log = session_log(&st, "local");
-    let opts =
-        LocalOptions { cols, rows, shell, cwd, startup_command: startup_command.unwrap_or_default(), log };
+    let opts = LocalOptions {
+        cols,
+        rows,
+        shell,
+        cwd,
+        startup_command: startup_command.unwrap_or_default(),
+        command,
+        log,
+    };
     st.terminals.open_local(id, opts, on_data)
 }
 

@@ -19,6 +19,7 @@ const SftpTab = lazy(() => import('./components/SftpTab.vue'))
 const CastPlayer = lazy(() => import('./components/CastPlayer.vue'))
 const HostEditor = lazy(() => import('./components/HostEditor.vue'))
 const Palette = lazy(() => import('./components/Palette.vue'))
+const Containers = lazy(() => import('./components/Containers.vue'))
 
 const views = {
   hosts: HostsView,
@@ -84,6 +85,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
     </main>
     <HostEditor v-if="store.editor" />
     <Palette v-if="store.palette" />
+    <Containers v-if="store.containers" />
     <Overlays />
   </div>
 </template>
