@@ -35,6 +35,7 @@ import { joinMultipartImages } from '../lib/iipmultipart'
 import { LineTracker, suggestFor, firstWord, cursorContext } from '../lib/suggest'
 import { Recorder, fmtClock } from '../lib/cast'
 import Icon from './Icon.vue'
+import HostStats from './HostStats.vue'
 
 const props = defineProps({ leaf: Object, tab: Object, visible: Boolean, split: Boolean })
 const emit = defineEmits(['grab'])
@@ -51,6 +52,7 @@ const title = computed(() =>
   target.kind === 'local' ? target.title || 'Local' : target.host.label || target.host.host,
 )
 const focused = computed(() => props.tab.focus === props.leaf.id)
+const showStats = computed(() => proto === 'ssh' && !!props.leaf.stats)
 /** This pane sends and receives broadcast input. */
 const broadcasting = computed(() => !!props.tab.broadcast && !props.leaf.noBroadcast)
 
@@ -611,6 +613,13 @@ async function openSearch() {
   searchInput.value?.focus()
 }
 
+// ---------- server stats panel (SSH) ----------
+function toggleStats() {
+  if (proto !== 'ssh') return
+  props.leaf.stats = !props.leaf.stats
+  if (!props.leaf.stats) term?.focus()
+}
+
 function splitHere(dir) {
   props.tab.focus = props.leaf.id
   splitFocused(dir)
@@ -636,7 +645,14 @@ function menu(e) {
     { label: 'Split right', icon: 'splitH', action: () => splitFocused('row') },
     { label: 'Split down', icon: 'splitV', action: () => splitFocused('col') },
     ...(proto === 'ssh'
-      ? [{ label: 'Open SFTP here', icon: 'folder', action: () => openSftp(target.host, { right: props.leaf.cwd }) }]
+      ? [
+          { label: 'Open SFTP here', icon: 'folder', action: () => openSftp(target.host, { right: props.leaf.cwd }) },
+          {
+            label: props.leaf.stats ? 'Hide server stats' : 'Show server stats',
+            icon: 'activity',
+            action: toggleStats,
+          },
+        ]
       : proto === 'local'
         ? [
             {
@@ -802,6 +818,7 @@ onMounted(async () => {
     },
     focus: () => term.focus(),
     toggleRecording,
+    toggleStats,
     term,
   })
   ro = new ResizeObserver(scheduleFit)
@@ -872,7 +889,7 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="tp"
-    :class="{ focused: focused && split, broadcasting, dropping, ringing }"
+    :class="{ focused: focused && split, broadcasting, dropping, ringing, withstats: showStats }"
     :style="{ background: theme().background }"
   >
     <div
@@ -900,6 +917,15 @@ onBeforeUnmount(() => {
       >
         <Icon name="broadcast" :size="13" />
       </button>
+      <button
+        v-if="proto === 'ssh'"
+        class="iconbtn"
+        :class="{ on: leaf.stats }"
+        @click="toggleStats"
+        :title="withHint(leaf.stats ? 'Hide server stats' : 'Show server stats', 'server_stats')"
+      >
+        <Icon name="activity" :size="13" />
+      </button>
       <button class="iconbtn" @click="splitFocused('row')" title="Split right">
         <Icon name="splitH" :size="13" />
       </button>
@@ -912,6 +938,14 @@ onBeforeUnmount(() => {
     <div v-else class="tools">
       <button class="iconbtn" @click="openSearch" :title="withHint('Find', 'find')">
         <Icon name="search" :size="14" />
+      </button>
+      <button
+        v-if="proto === 'ssh'"
+        class="iconbtn"
+        @click="toggleStats"
+        :title="withHint(leaf.stats ? 'Hide server stats' : 'Show server stats', 'server_stats')"
+      >
+        <Icon name="activity" :size="14" />
       </button>
       <button class="iconbtn" @click="(e) => menu(e)" title="Snippets & actions">
         <Icon name="code" :size="14" />
@@ -939,7 +973,16 @@ onBeforeUnmount(() => {
         <Icon name="x" :size="13" />
       </button>
     </div>
-    <div ref="el" class="xt"></div>
+    <div class="body">
+      <div ref="el" class="xt"></div>
+      <HostStats
+        v-if="showStats"
+        :host="target.host"
+        :active="visible && status === 'open'"
+        :style="{ color: theme().foreground }"
+        @close="toggleStats"
+      />
+    </div>
     <div
       v-if="ghost"
       class="ghost"
@@ -1006,8 +1049,14 @@ onBeforeUnmount(() => {
   color: inherit;
   opacity: 0.45;
 }
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
 .xt {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   padding: 6px 4px 4px 10px;
 }
@@ -1096,6 +1145,16 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line);
   opacity: 0;
   transition: opacity 0.15s;
+}
+.tp.withstats .tools,
+.tp.withstats .find,
+.tp.withstats .loading,
+.tp.withstats .recbadge.float {
+  right: 278px;
+}
+.ph .iconbtn.on {
+  color: var(--accent);
+  opacity: 1;
 }
 .tp:hover .tools {
   opacity: 0.95;

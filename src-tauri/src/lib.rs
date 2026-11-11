@@ -19,6 +19,7 @@ pub mod sessionlog;
 pub mod ssh;
 pub mod ssh_config;
 pub mod state;
+pub mod stats;
 pub mod telnet;
 pub mod terminal;
 pub mod vault;
@@ -123,6 +124,7 @@ pub fn run() {
             term::rec_stop,
             term::rec_reveal,
             term::cast_read,
+            term::host_stats,
             term::key_install,
             // files
             files::fs_open,

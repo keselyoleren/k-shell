@@ -38,6 +38,7 @@ const P = {
   zap: 'M13 2L3 14h9l-1 8 10-12h-9z',
   record: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   pause: 'M7 5h3v14H7zM14 5h3v14h-3z',
+  activity: 'M22 12h-4l-3 9L9 3l-3 9H2',
   broadcast:
     'M12 12h.01M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8',
   grid: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',

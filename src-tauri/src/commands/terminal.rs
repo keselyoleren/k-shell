@@ -232,6 +232,18 @@ pub async fn host_detect_os(st: State<'_>, host: Host) -> Res<String> {
     Ok(os)
 }
 
+/// CPU, memory, disk, uptime and load of a host, read over its pooled SSH connection.
+#[tauri::command]
+pub async fn host_stats(st: State<'_>, host: Host) -> Res<crate::stats::HostStats> {
+    let conn = st.pool.get(&st.vault, &host).await?;
+    let (out, _) = conn.exec(&crate::stats::command()).await?;
+    let stats = crate::stats::parse(&out);
+    if stats.is_empty() {
+        return Err("Stats aren't available for this host".into());
+    }
+    Ok(stats)
+}
+
 /// Append a keychain public key to `~/.ssh/authorized_keys` (like `ssh-copy-id`).
 #[tauri::command]
 pub async fn key_install(st: State<'_>, host: Host, key_id: String) -> Res<()> {

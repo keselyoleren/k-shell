@@ -213,6 +213,8 @@ pub struct Settings {
     pub images: bool,
     /// Memory for decoded images, per terminal, in MB (oldest images are dropped first).
     pub image_memory_mb: u32,
+    /// Seconds between refreshes of the server stats panel.
+    pub stats_interval: u32,
 }
 
 /// Terminal output highlighting: words (comma separated) or a regular expression, drawn in
@@ -287,6 +289,7 @@ impl Default for Settings {
             highlight_rules: default_highlights(),
             images: true,
             image_memory_mb: 64,
+            stats_interval: 3,
         }
     }
 }

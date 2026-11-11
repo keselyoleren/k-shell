@@ -60,6 +60,7 @@ const entries = await api.fs_list({ id, path: '/var/log' })
 | `ssh_exec` | `host, command` | `{ output, code }` |
 | `ssh_test` | `host` | `"Connected in N ms"` |
 | `host_detect_os` | `host` | OS id such as `ubuntu`, also saved on the host |
+| `host_stats` | `host` | `{ os, hostname, kernel, release, cpu_ticks, cpu_percent, cpus, mem_total, mem_used, mem_cache, swap_total, swap_used, uptime_secs, load, procs, net: { rx, tx }, disks: [{ mount, size, used }], top: [{ pid, name, cpu, mem }] }`, read over the pooled connection (Linux `/proc`, macOS/BSD `sysctl`, `vm_stat`, `netstat`, `ps`); errors when nothing could be read |
 | `key_install` | `host, keyId` | – (appends the public key to `authorized_keys`) |
 | `log_dir` | – | session-log folder (from the settings, or `Documents/K-Shell Logs`) |
 | `log_dir_open` | – | – (creates the folder and opens it in the OS file manager) |

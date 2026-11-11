@@ -734,6 +734,20 @@ async function importVault() {
             </div>
             <div class="set">
               <div>
+                <b>Server stats refresh</b>
+                <div class="dim">Seconds between updates of the CPU, memory and disk panel next to SSH terminals</div>
+              </div>
+              <input
+                class="input"
+                type="number"
+                min="1"
+                max="60"
+                style="width: 70px"
+                v-model.number="s.stats_interval"
+              />
+            </div>
+            <div class="set">
+              <div>
                 <b>Reopen tabs on launch</b>
                 <div class="dim">Tabs and split panes from the last session open again, and their sessions connect</div>
               </div>
