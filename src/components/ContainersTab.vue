@@ -502,15 +502,14 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
           </div>
         </div>
         <div class="scroll pad">
-          <div class="tiles">
-            <div v-for="x in disk" :key="x.kind" class="tile">
-              <span>{{ DISK_NAMES[x.kind] || x.kind }}</span
-              ><b>{{ x.size }}</b>
-              <small
-                >{{ x.active }} of {{ x.total }} in use<template v-if="reclaim(x.reclaimable)">
-                  · {{ reclaim(x.reclaimable) }} reclaimable</template
-                ></small
-              >
+          <div class="disk-wrap">
+            <div class="tiles disk">
+              <div v-for="x in disk" :key="x.kind" class="tile">
+                <span>{{ DISK_NAMES[x.kind] || x.kind }}</span
+                ><b>{{ x.size }}</b>
+                <small>{{ x.active }} of {{ x.total }} in use</small>
+                <small v-if="reclaim(x.reclaimable)" class="free">{{ reclaim(x.reclaimable) }} reclaimable</small>
+              </div>
             </div>
           </div>
           <pre v-if="storageErr" class="error">{{ storageErr }}</pre>
@@ -681,38 +680,40 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
           <div v-else-if="section === 'overview'" class="scroll pad">
             <div v-if="!d" class="empty dim">Loading…</div>
             <template v-else>
-              <div class="tiles">
-                <template v-if="stats">
-                  <div class="tile">
-                    <span>CPU</span><b>{{ stats.cpu }}</b>
-                    <small>{{ d.cpu_limit ? `limit ${d.cpu_limit} CPUs` : '100% = one core' }}</small>
+              <div class="disk-wrap">
+                <div class="tiles stat">
+                  <template v-if="stats">
+                    <div class="tile">
+                      <span>CPU</span><b>{{ stats.cpu }}</b>
+                      <small>{{ d.cpu_limit ? `limit ${d.cpu_limit} CPUs` : '100% = one core' }}</small>
+                    </div>
+                    <div class="tile">
+                      <span>Memory</span><b>{{ io(stats.mem)[0] }}</b>
+                      <small>{{ stats.mem_perc }} of {{ io(stats.mem)[1] }}</small>
+                    </div>
+                    <div class="tile">
+                      <span>Network</span><b>↓ {{ io(stats.net)[0] }}</b
+                      ><small>↑ {{ io(stats.net)[1] }} sent</small>
+                    </div>
+                    <div class="tile">
+                      <span>Disk I/O</span><b>{{ io(stats.block)[0] }} read</b
+                      ><small>{{ io(stats.block)[1] }} written</small>
+                    </div>
+                    <div class="tile">
+                      <span>Processes</span><b>{{ stats.pids }}</b
+                      ><small>in the container</small>
+                    </div>
+                  </template>
+                  <div v-else-if="!d.running" class="tile wide">
+                    <span>Stopped</span>
+                    <b>Exit code {{ d.exit_code }}</b>
+                    <small v-if="d.finished_at">{{ ago(d.finished_at) }} ago · {{ when(d.finished_at) }}</small>
                   </div>
-                  <div class="tile">
-                    <span>Memory</span><b>{{ io(stats.mem)[0] }}</b>
-                    <small>{{ stats.mem_perc }} of {{ io(stats.mem)[1] }}</small>
+                  <div v-else class="tile wide"><span>Usage</span><b class="dim">Reading CPU and memory…</b></div>
+                  <div class="tile" :title="`Image layers: ${fmtSize(d.size_root - d.size_rw)}`">
+                    <span>Disk</span><b>{{ fmtSize(d.size_rw) }}</b
+                    ><small>written · {{ fmtSize(d.size_root) }} with image</small>
                   </div>
-                  <div class="tile">
-                    <span>Network</span><b>↓ {{ io(stats.net)[0] }}</b
-                    ><small>↑ {{ io(stats.net)[1] }} sent</small>
-                  </div>
-                  <div class="tile">
-                    <span>Disk I/O</span><b>{{ io(stats.block)[0] }} read</b
-                    ><small>{{ io(stats.block)[1] }} written</small>
-                  </div>
-                  <div class="tile">
-                    <span>Processes</span><b>{{ stats.pids }}</b
-                    ><small>in the container</small>
-                  </div>
-                </template>
-                <div v-else-if="!d.running" class="tile wide">
-                  <span>Stopped</span>
-                  <b>Exit code {{ d.exit_code }}</b>
-                  <small v-if="d.finished_at">{{ ago(d.finished_at) }} ago · {{ when(d.finished_at) }}</small>
-                </div>
-                <div v-else class="tile wide"><span>Usage</span><b class="dim">Reading CPU and memory…</b></div>
-                <div class="tile" :title="`Image layers: ${fmtSize(d.size_root - d.size_rw)}`">
-                  <span>Disk</span><b>{{ fmtSize(d.size_rw) }}</b
-                  ><small>written · {{ fmtSize(d.size_root) }} with image</small>
                 </div>
               </div>
               <pre v-if="d.error" class="error">{{ d.error }}</pre>
@@ -1425,6 +1426,77 @@ b.bad {
 .tile small {
   font-size: 11px;
   color: var(--text-3);
+}
+/* Docker storage: fill the pane width, 4 → 2 → 1 columns by available space */
+.disk-wrap {
+  container-type: inline-size;
+}
+.tiles.disk {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.tiles.disk .tile {
+  gap: 3px;
+  padding: 12px 14px;
+}
+.tiles.disk .tile b {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+.tiles.disk .tile small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tiles.disk .tile small.free {
+  color: var(--warn);
+}
+/* Container overview: 6 → 3 → 2 columns, always filling the row */
+.tiles.stat {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+.tiles.stat .tile.wide {
+  grid-column: span 4;
+}
+.tiles.stat .tile.wide + .tile {
+  grid-column: span 2;
+}
+.tiles.stat .tile small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@container (max-width: 860px) {
+  .tiles.stat {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .tiles.stat .tile.wide {
+    grid-column: span 2;
+  }
+  .tiles.stat .tile.wide + .tile {
+    grid-column: span 1;
+  }
+}
+@container (max-width: 420px) {
+  .tiles.stat {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tiles.stat .tile.wide {
+    grid-column: span 2;
+  }
+  .tiles.stat .tile.wide + .tile {
+    grid-column: span 2;
+  }
+}
+@container (max-width: 560px) {
+  .tiles.disk {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (max-width: 280px) {
+  .tiles.disk {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .kv {
   display: grid;
