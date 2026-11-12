@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Fixed
+- Containers tab: a container limited to one CPU showed "1 CPUs" in its overview; it now says "1 CPU".
+
 ## [0.6.0] - 2026-11-11
 
 ### Added

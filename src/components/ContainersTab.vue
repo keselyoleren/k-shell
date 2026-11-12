@@ -31,6 +31,8 @@ function ago(iso) {
 }
 /** "1.2MB / 3kB" → ["1.2MB", "3kB"] */
 const io = (pair) => (pair || '').split(' / ').concat(['', '']).slice(0, 2)
+/** a CPU limit: "1 CPU", "0.5 CPUs", "2 CPUs" */
+const cpus = (n) => `${n} CPU${n === 1 ? '' : 's'}`
 const when = (iso) => (iso ? new Date(iso).toLocaleString() : '')
 const short = (id) => (id || '').replace(/^sha256:/, '').slice(0, 12)
 const copy = (text, what) => navigator.clipboard.writeText(text).then(() => toast(`${what} copied`))
@@ -685,7 +687,7 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
                 <template v-if="stats">
                   <div class="tile">
                     <span>CPU</span><b>{{ stats.cpu }}</b>
-                    <small>{{ d.cpu_limit ? `limit ${d.cpu_limit} CPUs` : '100% = one core' }}</small>
+                    <small>{{ d.cpu_limit ? `limit ${cpus(d.cpu_limit)}` : '100% = one core' }}</small>
                   </div>
                   <div class="tile">
                     <span>Memory</span><b>{{ io(stats.mem)[0] }}</b>
@@ -745,7 +747,7 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
                 <dt>Limits</dt>
                 <dd>
                   {{ d.memory_limit ? fmtSize(d.memory_limit) + ' memory' : 'no memory limit' }} ·
-                  {{ d.cpu_limit ? d.cpu_limit + ' CPUs' : 'no CPU limit' }}
+                  {{ d.cpu_limit ? cpus(d.cpu_limit) : 'no CPU limit' }}
                 </dd>
                 <template v-if="d.workdir || d.user">
                   <dt>Runs as</dt>
