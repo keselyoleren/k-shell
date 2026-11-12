@@ -202,7 +202,9 @@ impl Terminals {
                             ChannelMsg::Data { data } => buf.extend_from_slice(&data),
                             ChannelMsg::ExtendedData { data, .. } => buf.extend_from_slice(&data),
                             ChannelMsg::ExitStatus { exit_status } => exit = Some(exit_status),
-                            ChannelMsg::Eof | ChannelMsg::Close => done = true,
+                            // EOF comes before exit-status, so only Close ends the shell;
+                            // stopping at EOF loses the command's exit code.
+                            ChannelMsg::Close => done = true,
                             _ => {}
                         };
                         handle(msg, &mut buf);
