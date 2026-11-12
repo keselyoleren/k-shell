@@ -36,6 +36,10 @@ Manage all your servers and remote storage from one fast, native app: no account
 |---|---|---|
 | <img src="docs/images/hosts.webp" alt="Host list grouped by environment" /> | <img src="docs/images/file-manager.webp" alt="Dual-pane file manager with a transfer" /> | <img src="docs/images/palette.webp" alt="Command palette search" /> |
 
+| Docker containers | Image cleanup | Kubernetes pods |
+|---|---|---|
+| <img src="docs/images/containers.webp" alt="The Containers tab with a Compose project, one container's CPU, memory and network, and Docker's disk use along the bottom" /> | <img src="docs/images/containers-cleanup.webp" alt="Docker storage with the Clean up unused images dialog listing two images no container uses" /> | <img src="docs/images/kubernetes.webp" alt="A Kubernetes pod in CrashLoopBackOff with its container's reason, restarts and last exit" /> |
+
 </details>
 
 > If K-Shell is useful to you, a ⭐ on GitHub helps other people find it.
