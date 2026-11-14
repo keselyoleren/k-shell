@@ -4,7 +4,8 @@ import { ref, computed, onMounted } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { checkForUpdate, installUpdate } from '../lib/updater'
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog'
-import { store, loadVault, toast, err, prompt, confirm } from '../lib/store'
+import { store, loadVault, toast, err, prompt, confirm, form } from '../lib/store'
+import { refreshLock, lockNow } from '../lib/lock'
 import { api } from '../lib/api'
 import { themes, isDarkTheme } from '../lib/themes'
 import { RULE_COLORS, regexError } from '../lib/highlight'
@@ -23,6 +24,7 @@ const SECTIONS = [
   { id: 'terminal', label: 'Terminal', icon: 'terminal' },
   { id: 'shortcuts', label: 'Keyboard shortcuts', icon: 'grid' },
   { id: 'vault', label: 'Vault & backup', icon: 'lock' },
+  { id: 'security', label: 'Security', icon: 'shield' },
   { id: 'about', label: 'About', icon: 'info' },
 ]
 
@@ -198,6 +200,83 @@ async function exportVault() {
     err(e)
   }
 }
+// ---------- security ----------
+
+const IDLE_MINUTES = [
+  { v: 0, label: 'Never' },
+  { v: 1, label: '1 minute' },
+  { v: 5, label: '5 minutes' },
+  { v: 15, label: '15 minutes' },
+  { v: 30, label: '30 minutes' },
+  { v: 60, label: '1 hour' },
+]
+const CLIP_SECS = [
+  { v: 0, label: 'Never' },
+  { v: 10, label: '10 seconds' },
+  { v: 30, label: '30 seconds' },
+  { v: 60, label: '1 minute' },
+  { v: 120, label: '2 minutes' },
+]
+const lockBusy = ref(false)
+onMounted(() => refreshLock().catch(() => {}))
+
+async function lockAction(fn, done) {
+  lockBusy.value = true
+  try {
+    await fn()
+    await refreshLock()
+    if (done) toast(done)
+  } catch (e) {
+    if (String(e?.message || e) !== 'cancelled') err(e)
+  } finally {
+    lockBusy.value = false
+  }
+}
+
+/** Ask for a new password twice; null when cancelled. */
+async function newPassword(title, okText, extra = []) {
+  const v = await form(
+    title,
+    [
+      ...extra,
+      { name: 'password', label: 'New master password', password: true },
+      { name: 'repeat', label: 'Repeat it', password: true },
+    ],
+    {
+      message:
+        'There is no way to recover a forgotten master password: keep an encrypted backup (Vault & backup → Export) so you can start again from it.',
+      okText,
+    },
+  )
+  if (!v) return null
+  if (!v.password) return (err('Choose a password'), null)
+  if (v.password !== v.repeat) return (err("The passwords don't match"), null)
+  return v
+}
+
+async function toggleLock() {
+  if (store.lock.enabled) {
+    const password = await prompt('Turn off the app lock', {
+      password: true,
+      label: 'Master password',
+      okText: 'Turn off',
+    })
+    if (password) lockAction(() => api.lock_disable({ password }), 'App lock turned off')
+    return
+  }
+  const v = await newPassword('Lock K-Shell with a master password', 'Turn on')
+  if (v) lockAction(() => api.lock_enable({ password: v.password }), 'App lock turned on')
+}
+async function changePassword() {
+  const v = await newPassword('Change master password', 'Change', [
+    { name: 'old', label: 'Current master password', password: true },
+  ])
+  if (v) lockAction(() => api.lock_change_password({ old: v.old, new: v.password }), 'Master password changed')
+}
+function toggleTouchId() {
+  lockAction(() => api.lock_set_touch_id({ enabled: !store.lock.touch_id }))
+}
+
 async function importVault() {
   const path = await openDialog({ multiple: false })
   if (!path) return
@@ -964,6 +1043,94 @@ async function importVault() {
                 <div class="dim">Local only, encrypted with XChaCha20-Poly1305. Key kept in the OS keychain.</div>
               </div>
               <Icon name="lock" style="color: var(--ok)" />
+            </div>
+          </div>
+        </template>
+
+        <!-- ================= Security ================= -->
+        <template v-else-if="store.settingsTab === 'security'">
+          <div class="section-title">App lock</div>
+          <div class="card pad">
+            <div class="set">
+              <div>
+                <b>Lock K-Shell</b>
+                <div class="dim">
+                  Ask for a master password before hosts, keys and snippets can be used. While the lock is on the vault
+                  key is not kept in the OS keychain: it is sealed with the password (Argon2id).
+                </div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: store.lock.enabled }"
+                :disabled="lockBusy"
+                @click="toggleLock"
+              ></button>
+            </div>
+            <template v-if="store.lock.enabled">
+              <div class="set">
+                <div>
+                  <b>Master password</b>
+                  <div class="dim">
+                    Open sessions keep running while K-Shell is locked, hidden behind the lock screen
+                  </div>
+                </div>
+                <div class="row" style="gap: 6px">
+                  <button class="btn" :disabled="lockBusy" @click="changePassword">Change…</button>
+                  <button class="btn" @click="lockNow"><Icon name="lock" :size="14" /> Lock now</button>
+                </div>
+              </div>
+              <div v-if="store.platform.os === 'macos'" class="set">
+                <div>
+                  <b>Unlock with Touch ID</b>
+                  <div class="dim" v-if="store.lock.touch_id_available">
+                    A copy of the vault key is kept in the macOS keychain and read only after Touch ID succeeds
+                  </div>
+                  <div class="dim" v-else>Touch ID isn't available on this Mac</div>
+                </div>
+                <button
+                  class="switch"
+                  :class="{ on: store.lock.touch_id }"
+                  :disabled="lockBusy || (!store.lock.touch_id_available && !store.lock.touch_id)"
+                  @click="toggleTouchId"
+                ></button>
+              </div>
+              <div class="set">
+                <div>
+                  <b>Lock after inactivity</b>
+                  <div class="dim">No keyboard or mouse use in K-Shell for this long</div>
+                </div>
+                <select class="select" style="width: 150px" v-model.number="s.lock_idle_minutes">
+                  <option v-for="o in IDLE_MINUTES" :key="o.v" :value="o.v">{{ o.label }}</option>
+                </select>
+              </div>
+              <div class="set">
+                <div>
+                  <b>Lock when the computer sleeps</b>
+                  <div class="dim">K-Shell is locked when the computer wakes up</div>
+                </div>
+                <button
+                  class="switch"
+                  :class="{ on: s.lock_on_sleep }"
+                  @click="s.lock_on_sleep = !s.lock_on_sleep"
+                ></button>
+              </div>
+            </template>
+          </div>
+
+          <div class="section-title">Clipboard</div>
+          <div class="card pad">
+            <div class="set">
+              <div>
+                <b>Clear copied secrets</b>
+                <div class="dim">
+                  Passwords, private keys and passphrases copied from Hosts or Keychain are removed from the clipboard
+                  after this delay, unless something else was copied since. They are also marked so clipboard history
+                  tools skip them.
+                </div>
+              </div>
+              <select class="select" style="width: 150px" v-model.number="s.clipboard_clear_secs">
+                <option v-for="o in CLIP_SECS" :key="o.v" :value="o.v">{{ o.label }}</option>
+              </select>
             </div>
           </div>
         </template>

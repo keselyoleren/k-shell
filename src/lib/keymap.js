@@ -25,6 +25,7 @@ import {
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { api } from './api'
 import { zoomBy, zoomReset } from './appearance'
+import { lockNow } from './lock'
 
 const isMac = () => store.platform.os === 'macos'
 const plat = () => (isMac() ? 'mac' : 'pc')
@@ -91,6 +92,7 @@ export const ACTIONS = [
   { id: 'snippets', group: 'General', label: 'Snippets', run: () => showVault('snippets') },
   { id: 'keys', group: 'General', label: 'Keychain', run: () => showVault('keys') },
   { id: 'forwards', group: 'General', label: 'Port forwarding', run: () => showVault('forwards') },
+  { id: 'lock', group: 'General', label: 'Lock K-Shell now', run: () => lockNow() },
 
   {
     id: 'new_local',

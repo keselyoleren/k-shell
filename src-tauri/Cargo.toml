@@ -48,6 +48,8 @@ tokio-util = { version = "0.7", features = ["compat"] }
 hmac = "0.12"
 sha2 = "0.10"
 serialport = { version = "4.10", default-features = false }
+# Already pulled in by the clipboard plugin; used directly to mark copied secrets as concealed.
+arboard = { version = "3.7", default-features = false }
 
 [profile.release]
 codegen-units = 1
@@ -60,6 +62,13 @@ strip = true
 # ciphers) is painfully slow unoptimised. Our own crate stays fast to compile.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Touch ID for unlocking the vault.
+[target."cfg(target_os = \"macos\")".dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSError", "NSString"] }
+objc2-local-authentication = { version = "0.3", default-features = false, features = ["std", "block2", "LAContext", "LAError"] }
 
 [target."cfg(windows)".dependencies]
 winreg = "0.56.0"

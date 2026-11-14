@@ -25,6 +25,9 @@ pub struct AppState {
     pub watches: Mutex<HashMap<String, Watch>>,
     /// Terminal recordings in progress (`.cast` files).
     pub recordings: crate::cast::Recordings,
+    /// Port-forwarding rules flagged `auto_start` have been started (at launch, or after the
+    /// first unlock when K-Shell started locked).
+    pub autostarted: AtomicBool,
 }
 
 /// A downloaded copy of a remote file, kept so a save in another app can be uploaded back.
@@ -46,6 +49,7 @@ impl AppState {
             forwards: Forwards::default(),
             watches: Mutex::new(HashMap::new()),
             recordings: Default::default(),
+            autostarted: AtomicBool::new(false),
         }
     }
 
