@@ -1076,7 +1076,9 @@ async function importVault() {
                 </div>
                 <div class="row" style="gap: 6px">
                   <button class="btn" :disabled="lockBusy" @click="changePassword">Change…</button>
-                  <button class="btn" @click="lockNow"><Icon name="lock" :size="14" /> Lock now</button>
+                  <button class="btn" :title="hint('lock')" @click="lockNow">
+                    <Icon name="lock" :size="14" /> Lock now
+                  </button>
                 </div>
               </div>
               <div v-if="store.platform.os === 'macos'" class="set">

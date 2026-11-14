@@ -14,7 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   - Unlock with Touch ID on macOS (optional; a copy of the key is kept in the keychain and read only after Touch ID
     succeeds).
   - Locks after 1 to 60 minutes without keyboard or mouse use (15 by default), when the computer wakes from sleep,
-    or with "Lock K-Shell now" in the command palette (bindable in Keyboard shortcuts).
+    with <kbd>⇧⌘L</kbd> / <kbd>Ctrl+Shift+L</kbd>, or with "Lock K-Shell now" in the command palette.
   - Forgot the password: start again from an encrypted backup on the lock screen. The locked vault is kept in the
     data folder as `vault-locked-<date>.bin`, never deleted.
 - Copy password / Copy secret key in a host's context menu, and Copy private key / Copy passphrase in the Keychain.

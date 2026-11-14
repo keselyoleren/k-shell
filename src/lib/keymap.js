@@ -92,7 +92,14 @@ export const ACTIONS = [
   { id: 'snippets', group: 'General', label: 'Snippets', run: () => showVault('snippets') },
   { id: 'keys', group: 'General', label: 'Keychain', run: () => showVault('keys') },
   { id: 'forwards', group: 'General', label: 'Port forwarding', run: () => showVault('forwards') },
-  { id: 'lock', group: 'General', label: 'Lock K-Shell now', run: () => lockNow() },
+  {
+    id: 'lock',
+    group: 'General',
+    label: 'Lock K-Shell now',
+    mac: ['Shift+Meta+L'],
+    pc: ['Ctrl+Shift+L'],
+    run: () => lockNow(),
+  },
 
   {
     id: 'new_local',
