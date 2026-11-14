@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Lock K-Shell with a master password (Settings → Security, off by default). While the lock is on, the vault key is
+  no longer kept in the OS keychain: it is sealed with a key derived from the password (Argon2id), so the vault file
+  can't be opened without it. Locking drops the key and every decrypted host, key and snippet from memory; open
+  sessions keep running behind the lock screen. (#49)
+  - Unlock with Touch ID on macOS (optional; a copy of the key is kept in the keychain and read only after Touch ID
+    succeeds).
+  - Locks after 1 to 60 minutes without keyboard or mouse use (15 by default), when the computer wakes from sleep,
+    with <kbd>⇧⌘L</kbd> / <kbd>Ctrl+Shift+L</kbd>, or with "Lock K-Shell now" in the command palette.
+  - Forgot the password: start again from an encrypted backup on the lock screen. The locked vault is kept in the
+    data folder as `vault-locked-<date>.bin`, never deleted.
+- Copy password / Copy secret key in a host's context menu, and Copy private key / Copy passphrase in the Keychain.
+  The copy is marked so clipboard history tools skip it, and is cleared from the clipboard after 30 seconds unless
+  something else was copied (Settings → Security). (#50)
+
 ## [0.6.0] - 2026-11-11
 
 ### Added

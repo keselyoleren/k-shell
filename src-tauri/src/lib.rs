@@ -9,7 +9,9 @@
 //! * `containers` — Docker containers and Kubernetes pods (list, shell command)
 //! * `keys`, `ssh_config` — key generation/import, `~/.ssh/config` import
 
+pub mod biometric;
 pub mod cast;
+pub mod clip;
 pub mod commands;
 pub mod containers;
 pub mod error;
@@ -28,7 +30,7 @@ pub mod vault;
 
 use tauri::Manager;
 
-use commands::{containers as ctr, files, forwards, system, terminal as term, vault as v};
+use commands::{containers as ctr, files, forwards, lock, system, terminal as term, vault as v};
 
 /// macOS menu bar. It mirrors Tauri's default menu but leaves out
 /// "Close Window" (⌘W), so ⌘W reaches the UI and closes the current tab
@@ -77,9 +79,15 @@ pub fn run() {
             app.manage(state::AppState::new(vault));
             std::thread::spawn(fs::clean_open_copies);
 
+            lock::watch_sleep(app.handle().clone());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                forwards::autostart(&handle.state::<state::AppState>()).await;
+                let st = handle.state::<state::AppState>();
+                // A locked vault has no rules to read yet: they start after the first unlock.
+                if !st.vault.is_locked() {
+                    st.autostarted.store(true, std::sync::atomic::Ordering::SeqCst);
+                    forwards::autostart(&st).await;
+                }
             });
             Ok(())
         })
@@ -105,6 +113,17 @@ pub fn run() {
             v::import_putty,
             v::backup_export,
             v::backup_import,
+            // app lock & secret clipboard
+            lock::lock_status,
+            lock::lock_enable,
+            lock::lock_disable,
+            lock::lock_change_password,
+            lock::lock_set_touch_id,
+            lock::vault_lock,
+            lock::vault_unlock,
+            lock::vault_unlock_touch_id,
+            lock::vault_reset_from_backup,
+            lock::clipboard_copy_secret,
             // terminals & ssh
             term::term_open_ssh,
             term::term_open_local,

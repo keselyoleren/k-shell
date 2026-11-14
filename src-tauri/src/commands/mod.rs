@@ -11,6 +11,7 @@
 pub mod containers;
 pub mod files;
 pub mod forwards;
+pub mod lock;
 pub mod system;
 pub mod terminal;
 pub mod vault;

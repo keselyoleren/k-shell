@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { store, connectHost, openSftp, openMenu, openContainers, confirm, toast, err, loadVault } from '../lib/store'
 import { api } from '../lib/api'
+import { copySecret } from '../lib/lock'
 import { isObjectStorage, opensTerminal } from '../lib/os'
 import HostBadge from '../components/HostBadge.vue'
 import { importItems } from '../lib/importers'
@@ -117,6 +118,10 @@ function menu(e, h) {
     { label: 'Edit', icon: 'edit', action: () => edit(h) },
     { label: 'Duplicate', icon: 'copy', action: () => duplicate(h) },
     { label: 'Copy address', icon: 'copy', action: () => navigator.clipboard.writeText(h.host) },
+    ...(h.password ? [{ label: 'Copy password', icon: 'key', action: () => copySecret(h.password, 'Password') }] : []),
+    ...(h.secret_key
+      ? [{ label: 'Copy secret key', icon: 'key', action: () => copySecret(h.secret_key, 'Secret key') }]
+      : []),
     '-',
     { label: 'Delete', icon: 'trash', danger: true, action: () => remove(h) },
   ])

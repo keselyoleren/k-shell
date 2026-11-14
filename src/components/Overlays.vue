@@ -90,6 +90,7 @@ function run(item) {
             :ref="(el) => i === 0 && (input = el)"
             class="input mono"
             v-model="f.value"
+            :type="f.password ? 'password' : 'text'"
             :placeholder="f.placeholder"
             spellcheck="false"
           />

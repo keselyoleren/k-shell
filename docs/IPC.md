@@ -43,6 +43,26 @@ const entries = await api.fs_list({ id, path: '/var/log' })
 | `backup_export` | `path, passphrase` | – |
 | `backup_import` | `path, passphrase` | number of hosts in the backup (merged) |
 
+While the app lock is engaged, `vault_get`, the imports and `backup_export` fail with `"K-Shell is locked"`, and every
+command that saves the vault fails the same way: a locked vault is never written.
+
+## App lock and secret clipboard: `commands/lock.rs`
+
+| Command | Arguments | Returns |
+|---|---|---|
+| `lock_status` | – | `{ enabled, locked, touch_id, touch_id_available }` |
+| `lock_enable` | `password` | – (wraps the vault key with the password, removes it from the keychain) |
+| `lock_disable` | `password` | – (stores the key in the keychain again, removes `vault.lock`) |
+| `lock_change_password` | `old, new` | – |
+| `lock_set_touch_id` | `enabled` | – (macOS; turning it on shows the Touch ID prompt first) |
+| `vault_lock` | – | – (drops the key and the decrypted vault from memory) |
+| `vault_unlock` | `password` | – |
+| `vault_unlock_touch_id` | – | – (`"cancelled"` when the prompt is dismissed) |
+| `vault_reset_from_backup` | `path, passphrase` | – (forgotten password: the locked vault is renamed, never deleted) |
+| `clipboard_copy_secret` | `text` | – (concealed from clipboard history, cleared after `settings.clipboard_clear_secs`) |
+
+Event `vault-locked`: the backend locked the vault when the computer woke from sleep (`settings.lock_on_sleep`).
+
 ## Terminals, SSH, Telnet and serial: `commands/terminal.rs`
 
 | Command | Arguments | Returns |

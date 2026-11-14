@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onBeforeUnmount, computed, defineAsyncComponent } from 'vue'
-import { store, loadVault, err, restoreSession } from './lib/store'
+import { store, loadVault, err } from './lib/store'
+import { refreshLock, rememberLook, rememberedLook, startSession, startLockWatch } from './lib/lock'
 import { actionFor } from './lib/keymap'
 import { initAppearance } from './lib/appearance'
 import { api } from './lib/api'
@@ -20,6 +21,7 @@ const CastPlayer = lazy(() => import('./components/CastPlayer.vue'))
 const HostEditor = lazy(() => import('./components/HostEditor.vue'))
 const Palette = lazy(() => import('./components/Palette.vue'))
 const ContainersTab = lazy(() => import('./components/ContainersTab.vue'))
+const LockScreen = lazy(() => import('./components/LockScreen.vue'))
 
 const views = {
   hosts: HostsView,
@@ -33,6 +35,14 @@ const views = {
 const view = computed(() => views[store.view] || HostsView)
 
 function onKey(e) {
+  // Locked: keys reach the lock screen only, never a terminal or a shortcut behind it.
+  if (store.lock.locked) {
+    if (!e.target.closest?.('.lockscreen')) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    return
+  }
   if (store.recordingKeys) return
   const a = actionFor(e)
   // Terminal-scoped actions (copy, paste, find…) are handled by the focused terminal pane.
@@ -47,13 +57,21 @@ onMounted(async () => {
   try {
     store.platform = await api.platform()
     document.documentElement.dataset.os = store.platform.os
-    await loadVault()
-    restoreSession()
+    await refreshLock()
+    if (store.lock.locked) {
+      // Settings are in the vault too: dress the lock screen in the look of the last run.
+      store.vault.settings = rememberedLook()
+    } else {
+      await loadVault()
+      rememberLook()
+      startSession()
+    }
   } catch (e) {
     err(e)
   }
   store.ready = true
   startUpdateChecks()
+  startLockWatch()
   window.addEventListener('keydown', onKey, true)
   window.addEventListener('contextmenu', (e) => {
     if (!e.target.closest('input,textarea,.xterm,.cm-editor')) e.preventDefault()
@@ -88,6 +106,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
     <Palette v-if="store.palette" />
     <Overlays />
   </div>
+  <LockScreen v-if="store.lock.locked" />
 </template>
 
 <style>
