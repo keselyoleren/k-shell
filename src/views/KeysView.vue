@@ -4,6 +4,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { store, loadVault, toast, err, confirm, prompt, openMenu } from '../lib/store'
 import { api, fmtTime } from '../lib/api'
+import { copySecret } from '../lib/lock'
 import Icon from '../components/Icon.vue'
 
 const modal = ref(null) // 'gen' | 'import' | 'install'
@@ -99,6 +100,12 @@ function openInstall(k) {
 function menu(e, k) {
   openMenu(e, [
     { label: 'Copy public key', icon: 'copy', action: () => copyPub(k) },
+    ...(k.private_key
+      ? [{ label: 'Copy private key', icon: 'key', action: () => copySecret(k.private_key, 'Private key') }]
+      : []),
+    ...(k.passphrase
+      ? [{ label: 'Copy passphrase', icon: 'key', action: () => copySecret(k.passphrase, 'Passphrase') }]
+      : []),
     {
       label: 'Install on host…',
       icon: 'send',

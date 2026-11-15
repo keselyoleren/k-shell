@@ -3,6 +3,10 @@
 //! with XChaCha20-Poly1305. The 256-bit key lives in the OS keychain
 //! (macOS Keychain / Windows Credential Manager / Secret Service) with a
 //! 0600 key file as fallback.
+//!
+//! With the app lock on, the key is not stored at all: it is wrapped with a key derived from
+//! the master password (Argon2id) in `vault.lock`, and the vault stays locked (no key, no data
+//! in memory) until that password, or Touch ID, unlocks it.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use chacha20poly1305::{
@@ -215,6 +219,12 @@ pub struct Settings {
     pub image_memory_mb: u32,
     /// Seconds between refreshes of the server stats panel.
     pub stats_interval: u32,
+    /// App lock: minutes without keyboard or mouse use before K-Shell locks (0 = never).
+    pub lock_idle_minutes: u32,
+    /// App lock: lock when the computer goes to sleep.
+    pub lock_on_sleep: bool,
+    /// Seconds before a copied password or private key is cleared from the clipboard (0 = never).
+    pub clipboard_clear_secs: u32,
 }
 
 /// Terminal output highlighting: words (comma separated) or a regular expression, drawn in
@@ -290,6 +300,9 @@ impl Default for Settings {
             images: true,
             image_memory_mb: 64,
             stats_interval: 3,
+            lock_idle_minutes: 15,
+            lock_on_sleep: true,
+            clipboard_clear_secs: 30,
         }
     }
 }
@@ -358,21 +371,30 @@ impl VaultData {
 }
 
 pub struct Vault {
+    dir: PathBuf,
     path: PathBuf,
-    key: [u8; 32],
+    /// `None` while the app lock is engaged.
+    key: RwLock<Option<[u8; 32]>>,
     pub data: RwLock<VaultData>,
+}
+
+/// Error returned by anything that needs the vault while it is locked.
+pub const LOCKED: &str = "K-Shell is locked";
+
+// In release builds prefer the OS keychain. Debug builds are re-signed on
+// every compile which would make macOS prompt for keychain access each run.
+fn use_keyring() -> bool {
+    !cfg!(debug_assertions) && std::env::var("KSHELL_NO_KEYRING").is_err()
+}
+
+fn decode_key(s: &str) -> Option<[u8; 32]> {
+    B64.decode(s.trim()).ok()?.try_into().ok()
 }
 
 fn load_or_create_key(dir: &Path) -> Res<[u8; 32]> {
     let key_file = dir.join("vault.key");
-    // In release builds prefer the OS keychain. Debug builds are re-signed on
-    // every compile which would make macOS prompt for keychain access each run.
-    let use_keyring = !cfg!(debug_assertions) && std::env::var("KSHELL_NO_KEYRING").is_err();
-    let decode = |s: &str| -> Option<[u8; 32]> {
-        let v = B64.decode(s.trim()).ok()?;
-        v.try_into().ok()
-    };
-    if use_keyring {
+    let decode = decode_key;
+    if use_keyring() {
         if let Ok(entry) = keyring::Entry::new("K-Shell", "vault-key") {
             if let Ok(s) = entry.get_password() {
                 if let Some(k) = decode(&s) {
@@ -420,6 +442,97 @@ fn write_key_file(path: &Path, k: &[u8; 32]) -> Res<()> {
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(())
+}
+
+/// A stored copy of the vault key: an OS keychain entry in release builds, else a file.
+struct KeySlot {
+    account: &'static str,
+    file: &'static str,
+}
+/// The key K-Shell normally opens the vault with (absent while the app lock is on).
+const MAIN_KEY: KeySlot = KeySlot { account: "vault-key", file: "vault.key" };
+/// Copy kept for Touch ID unlock, read only after the OS prompt succeeds.
+const TOUCH_ID_KEY: KeySlot = KeySlot { account: "vault-key-touchid", file: "vault-touchid.key" };
+
+fn slot_set(dir: &Path, slot: &KeySlot, k: &[u8; 32]) -> Res<()> {
+    if use_keyring() {
+        if let Ok(e) = keyring::Entry::new("K-Shell", slot.account) {
+            if e.set_password(&B64.encode(k)).is_ok() {
+                let _ = std::fs::remove_file(dir.join(slot.file));
+                return Ok(());
+            }
+        }
+    }
+    write_key_file(&dir.join(slot.file), k)
+}
+
+fn slot_get(dir: &Path, slot: &KeySlot) -> Option<[u8; 32]> {
+    if use_keyring() {
+        let k = keyring::Entry::new("K-Shell", slot.account).and_then(|e| e.get_password()).ok();
+        if let Some(k) = k.and_then(|s| decode_key(&s)) {
+            return Some(k);
+        }
+    }
+    std::fs::read_to_string(dir.join(slot.file)).ok().and_then(|s| decode_key(&s))
+}
+
+fn delete_entry(service: &str, account: &str) -> Res<()> {
+    match keyring::Entry::new(service, account).and_then(|e| e.delete_credential()) {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn slot_delete(dir: &Path, slot: &KeySlot) -> Res<()> {
+    if use_keyring() {
+        delete_entry("K-Shell", slot.account)?;
+        if slot.account == MAIN_KEY.account {
+            // Pre-rename builds kept the same key under the "TermX" service.
+            delete_entry("TermX", slot.account)?;
+        }
+    }
+    match std::fs::remove_file(dir.join(slot.file)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// `vault.lock`: the vault key sealed with a key derived from the master password.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+struct LockFile {
+    version: u32,
+    salt: String,
+    wrapped: String,
+    /// A copy of the key is kept for Touch ID (see [`TOUCH_ID_KEY`]).
+    touch_id: bool,
+}
+
+impl LockFile {
+    fn new(key: &[u8; 32], password: &str) -> Res<Self> {
+        if password.is_empty() {
+            return Err("Choose a password".into());
+        }
+        let mut salt = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let wrapped = seal(&passphrase_key(password, &salt)?, key)?;
+        Ok(Self { version: 1, salt: B64.encode(salt), wrapped: B64.encode(wrapped), touch_id: false })
+    }
+
+    fn unwrap(&self, password: &str) -> Res<[u8; 32]> {
+        let salt = B64.decode(&self.salt).s()?;
+        let blob = B64.decode(&self.wrapped).s()?;
+        let key = open(&passphrase_key(password, &salt)?, &blob).map_err(|_| "Wrong password".to_string())?;
+        key.try_into().map_err(|_| "invalid lock file".to_string())
+    }
+}
+
+/// What the UI needs to know about the app lock.
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct LockStatus {
+    pub enabled: bool,
+    pub locked: bool,
+    pub touch_id: bool,
 }
 
 pub fn seal(key: &[u8; 32], plain: &[u8]) -> Res<Vec<u8>> {
@@ -525,24 +638,209 @@ pub fn migrate_legacy_dir(dir: &Path) {
 }
 
 impl Vault {
+    /// Open the vault in `dir`. With the app lock on it starts locked: nothing is decrypted
+    /// until [`Vault::unlock`].
     pub fn load(dir: PathBuf) -> Res<Self> {
         std::fs::create_dir_all(&dir).s()?;
-        let key = load_or_create_key(&dir)?;
         let path = dir.join(if cfg!(debug_assertions) { "vault-dev.bin" } else { "vault.bin" });
-        let data = match std::fs::read(&path) {
+        let v = Self { dir, path, key: RwLock::new(None), data: RwLock::new(VaultData::default()) };
+        if !v.lock_enabled() {
+            let key = load_or_create_key(&v.dir)?;
+            v.open_with(key)?;
+        }
+        Ok(v)
+    }
+
+    /// Decrypt the vault file with `key` and make it the unlocked vault.
+    fn open_with(&self, key: [u8; 32]) -> Res<()> {
+        let data = match std::fs::read(&self.path) {
             Ok(blob) => serde_json::from_slice(&open(&key, &blob)?).s()?,
-            Err(_) => VaultData { version: 1, ..Default::default() },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                VaultData { version: 1, ..Default::default() }
+            }
+            Err(e) => return Err(format!("{}: {e}", self.path.display())),
         };
-        Ok(Self { path, key, data: RwLock::new(data) })
+        let mut k = self.key.write();
+        *self.data.write() = data;
+        *k = Some(key);
+        Ok(())
     }
 
     pub fn save(&self) -> Res<()> {
+        // The key guard is held until the file is written, so locking (which takes it for
+        // writing before clearing the data) can never let an emptied vault be saved.
+        let key = self.key.read();
+        let key = key.as_ref().ok_or(LOCKED)?;
         let json = serde_json::to_vec(&*self.data.read()).s()?;
-        let blob = seal(&self.key, &json)?;
+        let blob = seal(key, &json)?;
         let tmp = self.path.with_extension("tmp");
         std::fs::write(&tmp, blob).s()?;
         std::fs::rename(&tmp, &self.path).s()?;
         Ok(())
+    }
+
+    // ---------- app lock ----------
+
+    fn lock_path(&self) -> PathBuf {
+        self.path.with_extension("lock")
+    }
+
+    pub fn lock_enabled(&self) -> bool {
+        self.lock_path().exists()
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.key.read().is_none()
+    }
+
+    pub fn ensure_unlocked(&self) -> Res<()> {
+        if self.is_locked() {
+            return Err(LOCKED.into());
+        }
+        Ok(())
+    }
+
+    fn current_key(&self) -> Res<[u8; 32]> {
+        (*self.key.read()).ok_or_else(|| LOCKED.to_string())
+    }
+
+    fn read_lock_file(&self) -> Res<LockFile> {
+        let p = self.lock_path();
+        serde_json::from_slice(&std::fs::read(&p).ctx(&p.display().to_string())?).s()
+    }
+
+    fn write_lock_file(&self, lf: &LockFile) -> Res<()> {
+        let tmp = self.path.with_extension("lock.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(lf).s()?).s()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        std::fs::rename(&tmp, self.lock_path()).s()
+    }
+
+    pub fn lock_status(&self) -> LockStatus {
+        let touch_id = self.read_lock_file().map(|l| l.touch_id).unwrap_or(false);
+        LockStatus { enabled: self.lock_enabled(), locked: self.is_locked(), touch_id }
+    }
+
+    /// Turn the app lock on: wrap the key with `password` and remove every stored copy of it.
+    pub fn enable_lock(&self, password: &str) -> Res<()> {
+        if self.lock_enabled() {
+            return Err("The app lock is already on".into());
+        }
+        let key = self.current_key()?;
+        self.save()?;
+        self.write_lock_file(&LockFile::new(&key, password)?)?;
+        let check = self.read_lock_file().and_then(|l| l.unwrap(password));
+        if check.ok() != Some(key) {
+            let _ = std::fs::remove_file(self.lock_path());
+            return Err("Could not write the lock file".into());
+        }
+        if let Err(e) = slot_delete(&self.dir, &MAIN_KEY) {
+            // Leave things as they were: key stored, lock off.
+            let _ = slot_set(&self.dir, &MAIN_KEY, &key);
+            let _ = std::fs::remove_file(self.lock_path());
+            return Err(format!("Could not remove the vault key from the keychain: {e}"));
+        }
+        Ok(())
+    }
+
+    /// Turn the app lock off: store the key again (keychain or key file) and drop the lock file.
+    pub fn disable_lock(&self, password: &str) -> Res<()> {
+        let key = self.read_lock_file()?.unwrap(password)?;
+        if Some(key) != *self.key.read() {
+            return Err(LOCKED.into());
+        }
+        slot_set(&self.dir, &MAIN_KEY, &key)?;
+        if slot_get(&self.dir, &MAIN_KEY) != Some(key) {
+            return Err("Could not store the vault key".into());
+        }
+        let _ = slot_delete(&self.dir, &TOUCH_ID_KEY);
+        std::fs::remove_file(self.lock_path()).s()
+    }
+
+    pub fn change_password(&self, old: &str, new: &str) -> Res<()> {
+        let lf = self.read_lock_file()?;
+        let key = lf.unwrap(old)?;
+        let mut next = LockFile::new(&key, new)?;
+        next.touch_id = lf.touch_id;
+        self.write_lock_file(&next)
+    }
+
+    /// Keep (or drop) the copy of the key that Touch ID unlocks.
+    pub fn set_touch_id(&self, on: bool) -> Res<()> {
+        let key = self.current_key()?;
+        let mut lf = self.read_lock_file()?;
+        if on {
+            slot_set(&self.dir, &TOUCH_ID_KEY, &key)?;
+        } else {
+            slot_delete(&self.dir, &TOUCH_ID_KEY)?;
+        }
+        lf.touch_id = on;
+        self.write_lock_file(&lf)
+    }
+
+    /// Engage the lock: forget the key and every decrypted item.
+    pub fn lock(&self) -> Res<()> {
+        if !self.lock_enabled() {
+            return Err("Turn on the app lock in Settings first".into());
+        }
+        let mut k = self.key.write();
+        if let Some(key) = k.as_mut() {
+            key.fill(0);
+        }
+        *k = None;
+        *self.data.write() = VaultData::default();
+        Ok(())
+    }
+
+    pub fn unlock(&self, password: &str) -> Res<()> {
+        let key = self.read_lock_file()?.unwrap(password)?;
+        if self.is_locked() {
+            self.open_with(key)?;
+        }
+        Ok(())
+    }
+
+    /// Unlock with the key copy kept for Touch ID; call only after the OS prompt succeeded.
+    pub fn unlock_touch_id(&self) -> Res<()> {
+        if !self.read_lock_file()?.touch_id {
+            return Err("Touch ID is not set up".into());
+        }
+        let key =
+            slot_get(&self.dir, &TOUCH_ID_KEY).ok_or("Touch ID key not found: unlock with your password")?;
+        if self.is_locked() {
+            self.open_with(key)?;
+        }
+        Ok(())
+    }
+
+    /// Forgotten master password: start a new vault from an encrypted backup. The locked
+    /// vault and its lock file are kept next to it, renamed, never deleted.
+    pub fn reset_from_backup(&self, blob: &[u8], passphrase: &str) -> Res<()> {
+        if !self.is_locked() {
+            return Err("K-Shell is not locked".into());
+        }
+        let mut data = import_backup(blob, passphrase)?;
+        data.version = data.version.max(1);
+        let mut key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut key);
+        slot_set(&self.dir, &MAIN_KEY, &key)?;
+        let stem = self.path.file_stem().and_then(|s| s.to_str()).unwrap_or("vault").to_string();
+        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        if self.path.exists() {
+            std::fs::rename(&self.path, self.dir.join(format!("{stem}-locked-{ts}.bin"))).s()?;
+        }
+        std::fs::rename(self.lock_path(), self.dir.join(format!("{stem}-locked-{ts}.lock"))).s()?;
+        let _ = slot_delete(&self.dir, &TOUCH_ID_KEY);
+        {
+            let mut k = self.key.write();
+            *self.data.write() = data;
+            *k = Some(key);
+        }
+        self.save()
     }
 
     pub fn host(&self, id: &str) -> Option<Host> {
@@ -657,6 +955,89 @@ mod tests {
         v.save().unwrap();
         let raw = std::fs::read(&v.path).unwrap();
         assert!(!String::from_utf8_lossy(&raw).contains("topsecret"));
+        assert_eq!(Vault::load(dir.clone()).unwrap().data.read().hosts.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn temp_vault() -> (PathBuf, Vault) {
+        let dir = std::env::temp_dir().join(format!("kshell-test-{}", new_id()));
+        let v = Vault::load(dir.clone()).unwrap();
+        v.data.write().hosts.push(Host {
+            id: "h".into(),
+            password: "topsecret".into(),
+            ..Default::default()
+        });
+        v.save().unwrap();
+        (dir, v)
+    }
+
+    #[test]
+    fn app_lock_wraps_key_and_locks() {
+        let (dir, v) = temp_vault();
+        assert!(v.lock().is_err(), "cannot lock before the lock is on");
+        assert!(v.enable_lock("").is_err());
+        v.enable_lock("hunter2").unwrap();
+        // No stored key any more: the vault can only be opened with the password.
+        assert!(slot_get(&dir, &MAIN_KEY).is_none());
+        let lock_file = std::fs::read_to_string(v.lock_path()).unwrap();
+        assert!(!lock_file.contains("topsecret"));
+
+        v.lock().unwrap();
+        assert!(v.is_locked());
+        assert!(v.data.read().hosts.is_empty(), "locking drops decrypted data");
+        assert_eq!(v.save().unwrap_err(), LOCKED, "a locked vault is never written");
+        assert!(v.host("h").is_none());
+
+        // A fresh start is locked too.
+        let again = Vault::load(dir.clone()).unwrap();
+        assert!(again.is_locked() && again.lock_status().enabled);
+        assert_eq!(again.unlock("nope").unwrap_err(), "Wrong password");
+        again.unlock("hunter2").unwrap();
+        assert_eq!(again.host("h").unwrap().password, "topsecret");
+
+        again.change_password("hunter2", "correct horse").unwrap();
+        assert!(again.disable_lock("hunter2").is_err());
+        again.disable_lock("correct horse").unwrap();
+        assert!(!again.lock_enabled());
+        let reopened = Vault::load(dir.clone()).unwrap();
+        assert!(!reopened.is_locked());
+        assert_eq!(reopened.data.read().hosts.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn touch_id_copy_follows_the_setting() {
+        let (dir, v) = temp_vault();
+        v.enable_lock("pw").unwrap();
+        v.set_touch_id(true).unwrap();
+        assert!(v.lock_status().touch_id);
+        v.lock().unwrap();
+        v.unlock_touch_id().unwrap();
+        assert_eq!(v.data.read().hosts.len(), 1);
+        v.set_touch_id(false).unwrap();
+        v.lock().unwrap();
+        assert!(v.unlock_touch_id().is_err());
+        assert!(slot_get(&dir, &TOUCH_ID_KEY).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn forgotten_password_restores_from_backup_and_keeps_old_vault() {
+        let (dir, v) = temp_vault();
+        let backup = export_backup(&v.data.read(), "backup pass").unwrap();
+        v.enable_lock("forgotten").unwrap();
+        v.lock().unwrap();
+        assert!(v.reset_from_backup(&backup, "wrong").is_err());
+        assert!(v.lock_enabled(), "a failed restore changes nothing");
+        v.reset_from_backup(&backup, "backup pass").unwrap();
+        assert!(!v.is_locked() && !v.lock_enabled());
+        assert_eq!(v.host("h").unwrap().password, "topsecret");
+        let kept: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.contains("-locked-"))
+            .collect();
+        assert_eq!(kept.len(), 2, "old vault and lock file are kept: {kept:?}");
         assert_eq!(Vault::load(dir.clone()).unwrap().data.read().hosts.len(), 1);
         let _ = std::fs::remove_dir_all(dir);
     }

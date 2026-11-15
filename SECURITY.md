@@ -22,6 +22,11 @@ Only the latest release receives security fixes.
 - **Vault at rest:** a single file encrypted with XChaCha20-Poly1305. The 256-bit key is kept in the OS keychain
   (macOS Keychain, Windows Credential Manager, Secret Service on Linux). If no keychain is available, it falls back to a
   `vault.key` file with `0600` permissions next to the vault.
+- **App lock (optional):** with Settings → Security → Lock K-Shell on, the vault key is removed from the keychain and
+  stored only sealed with a key derived from your master password (Argon2id) in `vault.lock`. While locked, the key
+  and the decrypted vault are dropped from memory. With Touch ID turned on, a copy of the key goes back into the macOS
+  keychain and K-Shell reads it only after a successful Touch ID prompt: that protects against someone at your
+  unlocked computer, not against malware running as your user, which could read the keychain item directly.
 - **Backups:** encrypted with a key derived from your passphrase using Argon2id.
 - **Host keys:** trusted on first use and pinned afterwards. A changed key aborts the connection. Mismatches recorded in
   `~/.ssh/known_hosts` are honoured too.

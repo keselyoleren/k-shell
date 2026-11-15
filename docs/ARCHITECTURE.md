@@ -56,6 +56,10 @@ All user data lives in one `VaultData` struct (`vault.rs`), held in memory behin
 through the `keyring` crate, with a `0600` key file as fallback. Debug builds always use the key file and
 `vault-dev.bin`, because rebuilt binaries would otherwise trigger a keychain prompt on every run.
 
+With the app lock on there is no stored key: `vault.lock` (`vault-dev.lock` in debug builds) holds it sealed with an
+Argon2id key from the master password, and `Vault::load` starts locked (`key: None`, empty data). `Vault::save` refuses
+to write while locked and holds the key guard while serialising, so a lock can never race an emptied vault onto disk.
+
 Every new field must be `#[serde(default)]`-compatible, since the structs use `#[serde(default)]`. That way old vaults
 keep loading. **Never rename or remove a field without a migration.**
 

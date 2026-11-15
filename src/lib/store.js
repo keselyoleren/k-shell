@@ -33,6 +33,8 @@ export const store = reactive({
   paneToTabBar: false, // a dragged pane is over the tab bar (drop = own tab) // true while the shortcut editor captures a key combination
   // in-app updater: state is idle | available | downloading | installing | restarting
   update: { state: 'idle', version: '', notes: '', progress: null, checking: false }, // context menu { x, y, items }
+  // app lock (see lib/lock.js): enabled, locked, touch_id (set up), touch_id_available (this computer)
+  lock: { enabled: false, locked: false, touch_id: false, touch_id_available: false },
 })
 
 export async function loadVault() {

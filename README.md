@@ -60,7 +60,7 @@ networking core and **Vue 3 + [xterm.js](https://xtermjs.org)** (WebGL) for the 
 | **Telnet & serial** | Telnet hosts (window size and terminal type sent to the server) and serial consoles: pick the port (`/dev/ttyUSB0`, `COM3`), baud rate, data bits, parity, stop bits and flow control. Both open as terminal tabs |
 | **Server stats** | A panel next to an SSH terminal: hostname, OS and kernel, uptime, CPU (user / system / iowait, load average) and memory (used / cache / free) with history graphs, network speed, disk usage per mount and the busiest processes. Read over the same SSH connection with nothing installed on the server (Linux, macOS and BSD) |
 | **Jump hosts** | ProxyJump chains (`laptop → bastion → … → target`) |
-| **Security** | Trust-on-first-use host keys with mismatch blocking, honours `~/.ssh/known_hosts`, vault encrypted with XChaCha20-Poly1305 and its key kept in the OS keychain |
+| **Security** | Trust-on-first-use host keys with mismatch blocking, honours `~/.ssh/known_hosts`, vault encrypted with XChaCha20-Poly1305 and its key kept in the OS keychain, optional app lock with a master password (Argon2id) or Touch ID that locks after inactivity and on sleep, copied passwords and private keys hidden from clipboard history and cleared after 30 seconds |
 | **Keychain** | Grid/list view, generate Ed25519 / ECDSA / RSA-4096 keys (optional passphrase), import, copy public key, install on a server (`ssh-copy-id`) |
 | **File manager** | Dual pane between **any** pair of Local / SFTP / FTP / FTPS / S3 / Azure Blob / GCS; drag between panes, drop files from your OS, recursive folders, parallel transfer queue with speed and cancel, rename, delete, chmod, built-in code editor with syntax highlighting, file icons with language and tool logos (Python, Rust, Go, Docker…) and icons by file type, image preview, open any file in its default app (remote files are offered for upload when saved there) |
 | **Object storage** | Any S3-compatible service (AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces, Wasabi, Backblaze B2, Tencent COS, Scaleway, Hetzner, Linode, Oracle, …) with path-style or virtual-hosted URLs, plus native **Azure Blob Storage** and **Google Cloud Storage** (service-account key). Share links: pre-signed for S3, read-only SAS for Azure, signed URL for GCS (needs a service-account key; not yet tested against real GCS) |
@@ -113,6 +113,7 @@ Every shortcut can be changed, removed or reset in **Settings → Keyboard short
 | <kbd>→</kbd> / <kbd>⌥→</kbd> | <kbd>→</kbd> / <kbd>Ctrl+→</kbd> | Accept autosuggestion / its next word |
 | <kbd>⌘=</kbd> / <kbd>⌘-</kbd> / <kbd>⌘0</kbd> | <kbd>Ctrl+=</kbd> / <kbd>Ctrl+-</kbd> / <kbd>Ctrl+0</kbd> | Zoom in / out / reset |
 | <kbd>⌘B</kbd> | <kbd>Ctrl+Shift+B</kbd> | Show / hide the sidebar |
+| <kbd>⇧⌘L</kbd> | <kbd>Ctrl+Shift+L</kbd> | Lock K-Shell (when the app lock is on) |
 | <kbd>⌘1</kbd> | <kbd>Ctrl+Shift+1</kbd> | Host list (Vault) |
 | <kbd>⌘2</kbd> … <kbd>⌘9</kbd> | <kbd>Ctrl+Shift+2</kbd> … <kbd>9</kbd> | Switch to an open tab |
 

@@ -6,8 +6,9 @@ use crate::vault::{self, upsert, Host, Key, Settings, Snippet, VaultData, Worksp
 use crate::{keys, ssh_config};
 
 #[tauri::command]
-pub fn vault_get(st: State) -> VaultData {
-    st.vault.data.read().clone()
+pub fn vault_get(st: State) -> Res<VaultData> {
+    st.vault.ensure_unlocked()?;
+    Ok(st.vault.data.read().clone())
 }
 
 #[tauri::command]
@@ -139,6 +140,7 @@ pub fn known_host_delete(st: State, host: String, key_type: String) -> Res<()> {
 
 #[tauri::command]
 pub fn import_ssh_config(st: State) -> Res<usize> {
+    st.vault.ensure_unlocked()?;
     let n = ssh_config::import(&mut st.vault.data.write())?;
     st.vault.save()?;
     Ok(n)
@@ -147,6 +149,7 @@ pub fn import_ssh_config(st: State) -> Res<usize> {
 /// Import PuTTY sessions: from the `.reg` file at `path`, or (Windows) from the registry.
 #[tauri::command]
 pub fn import_putty(st: State, path: Option<String>) -> Res<crate::putty::Report> {
+    st.vault.ensure_unlocked()?;
     let sessions = match path.filter(|p| !p.trim().is_empty()) {
         Some(p) => crate::putty::parse_reg(&crate::putty::reg_text(&std::fs::read(&p).ctx(&p)?)),
         None => registry_sessions()?,
@@ -171,6 +174,7 @@ fn registry_sessions() -> Res<Vec<crate::putty::Session>> {
 
 #[tauri::command]
 pub fn backup_export(st: State, path: String, passphrase: String) -> Res<()> {
+    st.vault.ensure_unlocked()?;
     let blob = vault::export_backup(&st.vault.data.read(), &passphrase)?;
     std::fs::write(&path, blob).ctx(&path)
 }
@@ -178,6 +182,7 @@ pub fn backup_export(st: State, path: String, passphrase: String) -> Res<()> {
 /// Merge an encrypted backup into the vault. Returns the number of hosts in it.
 #[tauri::command]
 pub fn backup_import(st: State, path: String, passphrase: String) -> Res<usize> {
+    st.vault.ensure_unlocked()?;
     let blob = std::fs::read(&path).ctx(&path)?;
     let incoming = vault::import_backup(&blob, &passphrase)?;
     let n = incoming.hosts.len();
