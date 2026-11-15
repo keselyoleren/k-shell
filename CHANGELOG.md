@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-15
+
 ### Added
 - Lock K-Shell with a master password (Settings → Security, off by default). While the lock is on, the vault key is
   no longer kept in the OS keychain: it is sealed with a key derived from the password (Argon2id), so the vault file
@@ -20,6 +22,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Copy password / Copy secret key in a host's context menu, and Copy private key / Copy passphrase in the Keychain.
   The copy is marked so clipboard history tools skip it, and is cleared from the clipboard after 30 seconds unless
   something else was copied (Settings → Security). (#50)
+
+### Fixed
+- An SSH terminal could end without the command's exit code: OpenSSH sends EOF before the exit status, and the
+  session stopped reading at EOF. It now reads until the channel closes.
+- Containers: the overview and Docker storage tiles fill the pane width and reflow with it (6, 3 or 2 columns for
+  the overview, 4, 2 or 1 for storage) instead of sitting at a fixed width on the left.
 
 ## [0.6.0] - 2026-11-11
 
