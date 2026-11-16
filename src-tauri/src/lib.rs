@@ -102,6 +102,8 @@ pub fn run() {
             v::key_import,
             v::snippet_save,
             v::snippet_delete,
+            v::password_save,
+            v::password_delete,
             v::settings_save,
             v::session_save,
             v::workspace_save,

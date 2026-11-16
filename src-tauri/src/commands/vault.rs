@@ -1,8 +1,8 @@
-//! Hosts, keys, snippets, settings, known hosts, import/backup.
+//! Hosts, keys, snippets, passwords, settings, known hosts, import/backup.
 
 use super::State;
 use crate::error::{Ctx, Res};
-use crate::vault::{self, upsert, Host, Key, Settings, Snippet, VaultData, Workspace};
+use crate::vault::{self, upsert, Host, Key, Password, Settings, Snippet, VaultData, Workspace};
 use crate::{keys, ssh_config};
 
 #[tauri::command]
@@ -85,6 +85,24 @@ pub fn snippet_save(st: State, snippet: Snippet) -> Res<Snippet> {
 #[tauri::command]
 pub fn snippet_delete(st: State, id: String) -> Res<()> {
     st.vault.data.write().snippets.retain(|s| s.id != id);
+    st.vault.save()
+}
+
+#[tauri::command]
+pub fn password_save(st: State, mut password: Password) -> Res<Password> {
+    let now = vault::now();
+    if password.created_at == 0 {
+        password.created_at = now;
+    }
+    password.updated_at = now;
+    let p = upsert(&mut st.vault.data.write().passwords, password);
+    st.vault.save()?;
+    Ok(p)
+}
+
+#[tauri::command]
+pub fn password_delete(st: State, id: String) -> Res<()> {
+    st.vault.data.write().passwords.retain(|p| p.id != id);
     st.vault.save()
 }
 

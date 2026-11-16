@@ -53,6 +53,7 @@ export function applyLocked() {
     hosts: [],
     keys: [],
     snippets: [],
+    passwords: [],
     forwards: [],
     known_hosts: [],
     workspaces: [],

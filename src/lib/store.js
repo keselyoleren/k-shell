@@ -9,6 +9,7 @@ export const store = reactive({
     hosts: [],
     keys: [],
     snippets: [],
+    passwords: [],
     forwards: [],
     known_hosts: [],
     workspaces: [],

@@ -27,6 +27,7 @@ const views = {
   hosts: HostsView,
   keys: lazy(() => import('./views/KeysView.vue')),
   snippets: lazy(() => import('./views/SnippetsView.vue')),
+  passwords: lazy(() => import('./views/PasswordsView.vue')),
   forwards: lazy(() => import('./views/ForwardsView.vue')),
   known: lazy(() => import('./views/KnownHostsView.vue')),
   settings: lazy(() => import('./views/SettingsView.vue')),

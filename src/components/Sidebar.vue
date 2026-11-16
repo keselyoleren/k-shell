@@ -10,6 +10,7 @@ const items = [
   { id: 'keys', icon: 'key', label: 'Keychain' },
   { id: 'forwards', icon: 'forward', label: 'Port Forwarding' },
   { id: 'snippets', icon: 'code', label: 'Snippets' },
+  { id: 'passwords', icon: 'lock', label: 'Passwords' },
   { id: 'known', icon: 'shield', label: 'Known Hosts' },
 ]
 function go(id) {

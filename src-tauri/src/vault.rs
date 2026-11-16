@@ -1,5 +1,5 @@
-//! Local-first encrypted vault: hosts, keys, snippets, port-forward rules,
-//! known hosts and settings. The whole vault is serialized to JSON and sealed
+//! Local-first encrypted vault: hosts, keys, snippets, saved passwords, port-forward
+//! rules, known hosts and settings. The whole vault is serialized to JSON and sealed
 //! with XChaCha20-Poly1305. The 256-bit key lives in the OS keychain
 //! (macOS Keychain / Windows Credential Manager / Secret Service) with a
 //! 0600 key file as fallback.
@@ -119,6 +119,21 @@ pub struct Snippet {
     pub name: String,
     pub command: String,
     pub tags: Vec<String>,
+}
+
+/// A saved password (database, sudo, web console, API token…) not tied to a host.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct Password {
+    pub id: String,
+    pub name: String,
+    pub username: String,
+    pub password: String,
+    pub url: String,
+    pub notes: String,
+    pub tags: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -314,6 +329,7 @@ pub struct VaultData {
     pub hosts: Vec<Host>,
     pub keys: Vec<Key>,
     pub snippets: Vec<Snippet>,
+    pub passwords: Vec<Password>,
     pub forwards: Vec<Forward>,
     pub known_hosts: Vec<KnownHost>,
     pub settings: Settings,
@@ -605,6 +621,9 @@ impl VaultData {
         for s in other.snippets {
             upsert(&mut self.snippets, s);
         }
+        for p in other.passwords {
+            upsert(&mut self.passwords, p);
+        }
         for f in other.forwards {
             upsert(&mut self.forwards, f);
         }
@@ -872,7 +891,7 @@ macro_rules! has_id { ($($t:ty),*) => { $(impl HasId for $t {
     fn id_mut(&mut self) -> &mut String { &mut self.id }
     fn id_ref(&self) -> &str { &self.id }
 })* } }
-has_id!(Host, Key, Snippet, Forward, Workspace, Project);
+has_id!(Host, Key, Snippet, Password, Forward, Workspace, Project);
 
 /// Upsert: assign an id when missing, replace when present.
 pub fn upsert<T: HasId + Clone>(list: &mut Vec<T>, mut item: T) -> T {
@@ -931,6 +950,24 @@ mod tests {
         assert!(!String::from_utf8_lossy(&blob).contains("web"));
         assert_eq!(import_backup(&blob, "correct horse").unwrap().hosts[0].password, "pw");
         assert!(import_backup(&blob, "wrong").is_err());
+    }
+
+    #[test]
+    fn passwords_survive_backup_and_merge() {
+        let mut d = VaultData::default();
+        d.passwords.push(Password {
+            id: "p".into(),
+            name: "db".into(),
+            password: "s3cret".into(),
+            ..Default::default()
+        });
+        let blob = export_backup(&d, "pass").unwrap();
+        assert!(!String::from_utf8_lossy(&blob).contains("s3cret"));
+        let mut mine = VaultData::default();
+        mine.passwords.push(Password { id: "p".into(), name: "old".into(), ..Default::default() });
+        mine.merge(import_backup(&blob, "pass").unwrap());
+        assert_eq!(mine.passwords.len(), 1);
+        assert_eq!(mine.passwords[0].password, "s3cret");
     }
 
     #[test]
