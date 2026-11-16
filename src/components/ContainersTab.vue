@@ -6,6 +6,8 @@ import { store, openContainerShell, confirm, toast, err } from '../lib/store'
 import { api, fmtSize } from '../lib/api'
 import Icon from './Icon.vue'
 import LogView from './LogView.vue'
+import Sparkline from './Sparkline.vue'
+import { parseSize, pct, level, push, fmtBytes, fmtRate, fmtUptime } from '../lib/stats'
 
 const props = defineProps({ tab: Object, visible: Boolean })
 const host = props.tab.host
@@ -77,13 +79,47 @@ async function loadInfo(quiet = false) {
     const detail = await api.docker_detail({ host, id })
     if (id !== sel.value) return
     info.value = { detail, stats: detail.running ? info.value?.stats || null : null }
-    if (detail.running) {
-      const stats = await api.docker_stats({ host, id }).catch(() => null)
-      if (id === sel.value && info.value) info.value = { ...info.value, stats }
-    }
+    if (detail.running) await loadStats()
   } catch (e) {
     if (id === sel.value && !quiet) infoErr.value = String(e)
   }
+}
+
+// Usage of the selected container, sampled every few seconds while its overview is on screen,
+// with a short history for the graphs. Docker prints network and disk totals rounded to three
+// digits, too coarse for a rate between two samples, so those show the average since start.
+const POINTS = 40
+const SAMPLE_MS = 4000
+const usage = ref(newUsage(''))
+function newUsage(id) {
+  return { id, at: 0, cpu: [], mem: [], pids: [], peak: 0 }
+}
+let statsBusy = false
+async function loadStats() {
+  const id = sel.value
+  if (!id || statsBusy) return
+  statsBusy = true
+  try {
+    const stats = await api.docker_stats({ host, id }).catch(() => null)
+    if (id !== sel.value || !info.value) return
+    info.value = { ...info.value, stats }
+    if (stats) record(id, stats)
+  } finally {
+    statsBusy = false
+  }
+}
+function record(id, s) {
+  if (usage.value.id !== id) usage.value = newUsage(id)
+  const u = usage.value
+  const now = Date.now()
+  // the regular refresh also reads usage: keep the graph's samples evenly spaced
+  if (now - u.at < SAMPLE_MS * 0.6) return
+  u.at = now
+  const mem = parseSize(io(s.mem)[0]) || 0
+  push(u.cpu, parseFloat(s.cpu) || 0, POINTS)
+  push(u.mem, parseFloat(s.mem_perc) || 0, POINTS)
+  push(u.pids, parseInt(s.pids) || 0, POINTS)
+  u.peak = Math.max(u.peak, mem)
 }
 const diskErr = ref('')
 const diskLoading = ref(false)
@@ -98,8 +134,9 @@ async function loadDisk() {
     diskLoading.value = false
   }
 }
-watch(sel, () => {
+watch(sel, (id) => {
   info.value = null
+  usage.value = newUsage(id)
   loadInfo()
 })
 
@@ -123,6 +160,37 @@ const groups = computed(() => {
 const current = computed(() => (dk.value.list || []).find((c) => c.id === sel.value) || null)
 const d = computed(() => info.value?.detail || null)
 const stats = computed(() => info.value?.stats || null)
+/** The cards' numbers, from `docker stats` and `docker inspect`. */
+const use = computed(() => {
+  const s = stats.value
+  const det = d.value
+  if (!s || !det) return null
+  const cpu = parseFloat(s.cpu) || 0
+  const [mem, memMax] = io(s.mem).map(parseSize)
+  const [rx, tx] = io(s.net).map(parseSize)
+  const [rd, wr] = io(s.block).map(parseSize)
+  const up = det.started_at ? Math.max(0, (Date.now() - Date.parse(det.started_at)) / 1000) : 0
+  const avg = (n) => (n != null && up >= 60 ? n / up : null)
+  const image = Math.max(0, det.size_root - det.size_rw)
+  return {
+    cpu,
+    // without a limit Docker counts 100% per core, so there is no "full" to show a bar against
+    cpuPct: det.cpu_limit ? pct(cpu, det.cpu_limit * 100) : null,
+    cpuMax: det.cpu_limit ? det.cpu_limit * 100 : Math.max(100, ...usage.value.cpu),
+    mem,
+    memMax,
+    memPct: parseFloat(s.mem_perc) || 0,
+    rx,
+    tx,
+    rd,
+    wr,
+    avg: { rx: avg(rx), tx: avg(tx), rd: avg(rd), wr: avg(wr) },
+    up,
+    pids: parseInt(s.pids) || 0,
+    layerPct: pct(det.size_rw, det.size_root),
+    image,
+  }
+})
 
 function dockerShell(c) {
   openContainerShell(host, { engine: 'docker', id: c.id }, c.name)
@@ -402,7 +470,15 @@ watch(
 )
 // keep the state and usage current while the tab is on screen (logs reload on demand)
 const timer = setInterval(() => props.visible && !busy.value && refresh(true), 8000)
-onBeforeUnmount(() => clearInterval(timer))
+// usage graphs of the container on screen
+const statsTimer = setInterval(() => {
+  if (props.visible && !busy.value && engine.value === 'docker' && section.value === 'overview' && d.value?.running)
+    loadStats()
+}, SAMPLE_MS)
+onBeforeUnmount(() => {
+  clearInterval(timer)
+  clearInterval(statsTimer)
+})
 const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : kube.value.loading))
 </script>
 
@@ -682,26 +758,73 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
             <template v-else>
               <div class="disk-wrap">
                 <div class="tiles stat">
-                  <template v-if="stats">
-                    <div class="tile">
-                      <span>CPU</span><b>{{ stats.cpu }}</b>
-                      <small>{{ d.cpu_limit ? `limit ${d.cpu_limit} CPUs` : '100% = one core' }}</small>
+                  <template v-if="use">
+                    <div
+                      class="tile"
+                      :title="`CPU time used, sampled every ${SAMPLE_MS / 1000} s. The graph shows the last few minutes.`"
+                    >
+                      <span>CPU</span>
+                      <b :class="level(use.cpuPct)">{{ stats.cpu }}</b>
+                      <Sparkline
+                        :series="[{ values: usage.cpu, color: 'var(--accent)' }]"
+                        :max="use.cpuMax"
+                        :points="POINTS"
+                        :height="24"
+                      />
+                      <small v-if="d.cpu_limit">{{ Math.round(use.cpuPct) }}% of the {{ d.cpu_limit }} CPU limit</small>
+                      <small v-else>no limit · 100% = one core</small>
                     </div>
-                    <div class="tile">
-                      <span>Memory</span><b>{{ io(stats.mem)[0] }}</b>
-                      <small>{{ stats.mem_perc }} of {{ io(stats.mem)[1] }}</small>
+                    <div class="tile" :title="`Peak since opened: ${fmtBytes(usage.peak)}`">
+                      <span>Memory</span>
+                      <b :class="level(use.memPct)">{{ fmtBytes(use.mem) }}</b>
+                      <Sparkline
+                        :series="[{ values: usage.mem, color: 'var(--ok)' }]"
+                        :max="100"
+                        :points="POINTS"
+                        :height="24"
+                      />
+                      <small
+                        >{{ stats.mem_perc }} of {{ fmtBytes(use.memMax) }}
+                        {{ d.memory_limit ? 'limit' : 'host memory (no limit)' }}</small
+                      >
                     </div>
-                    <div class="tile">
-                      <span>Network</span><b>↓ {{ io(stats.net)[0] }}</b
-                      ><small>↑ {{ io(stats.net)[1] }} sent</small>
+                    <div class="tile" title="Totals since the container started, as Docker reports them">
+                      <span>Network</span>
+                      <div class="pair">
+                        <b class="rx"><Icon name="down" :size="11" /> {{ fmtBytes(use.rx) }}</b>
+                        <b class="tx"><Icon name="up" :size="11" /> {{ fmtBytes(use.tx) }}</b>
+                      </div>
+                      <div class="split" v-if="use.rx + use.tx > 0">
+                        <i class="rx" :style="{ flex: use.rx }"></i><i class="tx" :style="{ flex: use.tx }"></i>
+                      </div>
+                      <small v-if="use.avg.rx != null"
+                        >avg ↓ {{ fmtRate(use.avg.rx) }} · ↑ {{ fmtRate(use.avg.tx) }}</small
+                      >
+                      <small v-else>received · sent since start</small>
                     </div>
-                    <div class="tile">
-                      <span>Disk I/O</span><b>{{ io(stats.block)[0] }} read</b
-                      ><small>{{ io(stats.block)[1] }} written</small>
+                    <div class="tile" title="Totals since the container started, as Docker reports them">
+                      <span>Disk I/O</span>
+                      <div class="pair">
+                        <b class="rx" title="Read"><Icon name="down" :size="11" /> {{ fmtBytes(use.rd) }}</b>
+                        <b class="tx" title="Written"><Icon name="up" :size="11" /> {{ fmtBytes(use.wr) }}</b>
+                      </div>
+                      <div class="split" v-if="use.rd + use.wr > 0">
+                        <i class="rx" :style="{ flex: use.rd }"></i><i class="tx" :style="{ flex: use.wr }"></i>
+                      </div>
+                      <small v-if="use.avg.rd != null"
+                        >avg {{ fmtRate(use.avg.rd) }} read · {{ fmtRate(use.avg.wr) }} written</small
+                      >
+                      <small v-else>read · written since start</small>
                     </div>
-                    <div class="tile">
-                      <span>Processes</span><b>{{ stats.pids }}</b
-                      ><small>in the container</small>
+                    <div class="tile" title="Processes and threads running in the container">
+                      <span>Processes</span>
+                      <b>{{ use.pids }}</b>
+                      <Sparkline
+                        :series="[{ values: usage.pids, color: 'var(--warn)' }]"
+                        :points="POINTS"
+                        :height="24"
+                      />
+                      <small>up {{ fmtUptime(use.up) || 'under a minute' }}</small>
                     </div>
                   </template>
                   <div v-else-if="!d.running" class="tile wide">
@@ -710,9 +833,17 @@ const loading = computed(() => (engine.value === 'docker' ? dk.value.loading : k
                     <small v-if="d.finished_at">{{ ago(d.finished_at) }} ago · {{ when(d.finished_at) }}</small>
                   </div>
                   <div v-else class="tile wide"><span>Usage</span><b class="dim">Reading CPU and memory…</b></div>
-                  <div class="tile" :title="`Image layers: ${fmtSize(d.size_root - d.size_rw)}`">
-                    <span>Disk</span><b>{{ fmtSize(d.size_rw) }}</b
-                    ><small>written · {{ fmtSize(d.size_root) }} with image</small>
+                  <div
+                    class="tile"
+                    :title="`Files the container wrote in its own layer: ${fmtSize(d.size_rw)}. Image layers: ${fmtSize(Math.max(0, d.size_root - d.size_rw))}.`"
+                  >
+                    <span>Disk</span>
+                    <b>{{ fmtSize(d.size_rw) }}</b>
+                    <div class="split">
+                      <i class="layer" :style="{ flex: d.size_rw }"></i
+                      ><i class="image" :style="{ flex: Math.max(0, d.size_root - d.size_rw) }"></i>
+                    </div>
+                    <small>written · image {{ fmtSize(Math.max(0, d.size_root - d.size_rw)) }}</small>
                   </div>
                 </div>
               </div>
@@ -1465,6 +1596,64 @@ b.bad {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-top: auto;
+}
+.tiles.stat .tile {
+  gap: 5px;
+  padding: 10px 12px;
+}
+.tiles.stat .tile b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.tiles.stat .tile b.warn {
+  color: var(--warn);
+}
+.tiles.stat .tile b.crit {
+  color: var(--danger);
+}
+.tile .pair {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.tile .pair b {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 14px;
+}
+.tile .pair .rx {
+  color: var(--ok);
+}
+.tile .pair .tx {
+  color: var(--accent);
+}
+.tile .split .rx {
+  background: var(--ok);
+}
+.tile .split .tx {
+  background: var(--accent);
+}
+/* share of two totals, or of the container's layer in its disk use */
+.tile .split {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin: 9px 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(127, 127, 127, 0.2);
+}
+.tile .split i {
+  display: block;
+  min-width: 2px;
+}
+.tile .split .layer {
+  background: var(--accent);
+}
+.tile .split .image {
+  background: rgba(127, 127, 127, 0.35);
 }
 @container (max-width: 860px) {
   .tiles.stat {
