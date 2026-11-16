@@ -14,10 +14,13 @@ pub mod cast;
 pub mod clip;
 pub mod commands;
 pub mod containers;
+pub mod csv_hosts;
 pub mod error;
 pub mod forward;
 pub mod fs;
+pub mod import;
 pub mod keys;
+pub mod mobaxterm;
 pub mod putty;
 pub mod sessionlog;
 pub mod ssh;
@@ -113,6 +116,8 @@ pub fn run() {
             v::known_host_delete,
             v::import_ssh_config,
             v::import_putty,
+            v::import_mobaxterm,
+            v::import_csv,
             v::backup_export,
             v::backup_import,
             // app lock & secret clipboard

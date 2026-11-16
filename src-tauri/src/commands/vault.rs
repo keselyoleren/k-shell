@@ -166,7 +166,7 @@ pub fn import_ssh_config(st: State) -> Res<usize> {
 
 /// Import PuTTY sessions: from the `.reg` file at `path`, or (Windows) from the registry.
 #[tauri::command]
-pub fn import_putty(st: State, path: Option<String>) -> Res<crate::putty::Report> {
+pub fn import_putty(st: State, path: Option<String>) -> Res<crate::import::Report> {
     st.vault.ensure_unlocked()?;
     let sessions = match path.filter(|p| !p.trim().is_empty()) {
         Some(p) => crate::putty::parse_reg(&crate::putty::reg_text(&std::fs::read(&p).ctx(&p)?)),
@@ -176,6 +176,30 @@ pub fn import_putty(st: State, path: Option<String>) -> Res<crate::putty::Report
         return Err("No PuTTY sessions found".into());
     }
     let report = crate::putty::import(&mut st.vault.data.write(), sessions);
+    st.vault.save()?;
+    Ok(report)
+}
+
+/// Import MobaXterm sessions from a `.mxtsessions` export or `MobaXterm.ini`.
+#[tauri::command]
+pub fn import_mobaxterm(st: State, path: String) -> Res<crate::import::Report> {
+    st.vault.ensure_unlocked()?;
+    let text = crate::import::decode(&std::fs::read(&path).ctx(&path)?);
+    let sessions = crate::mobaxterm::parse(&text);
+    if sessions.is_empty() {
+        return Err("No MobaXterm sessions found in this file".into());
+    }
+    let report = crate::mobaxterm::import(&mut st.vault.data.write(), sessions);
+    st.vault.save()?;
+    Ok(report)
+}
+
+/// Import hosts from a CSV file.
+#[tauri::command]
+pub fn import_csv(st: State, path: String) -> Res<crate::import::Report> {
+    st.vault.ensure_unlocked()?;
+    let text = crate::import::decode(&std::fs::read(&path).ctx(&path)?);
+    let report = crate::csv_hosts::import(&mut st.vault.data.write(), &text)?;
     st.vault.save()?;
     Ok(report)
 }
