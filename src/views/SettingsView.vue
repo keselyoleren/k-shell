@@ -1,5 +1,5 @@
 <script setup>
-import { importSshConfig, importPutty } from '../lib/importers'
+import { importSshConfig, importPutty, importMobaxterm, importCsv } from '../lib/importers'
 import { ref, computed, onMounted } from 'vue'
 import { getVersion } from '@tauri-apps/api/app'
 import { checkForUpdate, installUpdate } from '../lib/updater'
@@ -1024,6 +1024,27 @@ async function importVault() {
                 </button>
                 <button class="btn" @click="importPutty({ file: true })">.reg file…</button>
               </div>
+            </div>
+            <div class="set">
+              <div>
+                <b>Import MobaXterm sessions</b>
+                <div class="dim">
+                  SSH sessions with host, port, user, key file, login command and SSH gateways (as jump hosts); folders
+                  become groups. Pick a .mxtsessions file exported from MobaXterm, or its MobaXterm.ini. MobaXterm
+                  doesn't export passwords.
+                </div>
+              </div>
+              <button class="btn" @click="importMobaxterm"><Icon name="file" :size="14" /> File…</button>
+            </div>
+            <div class="set">
+              <div>
+                <b>Import a CSV file</b>
+                <div class="dim">
+                  One host per row. Columns by header: name, host, port, user, group, tags, protocol, notes (any order;
+                  without a header: name, host, port, user, group). A password column is not imported.
+                </div>
+              </div>
+              <button class="btn" @click="importCsv"><Icon name="file" :size="14" /> File…</button>
             </div>
             <div class="set">
               <div>

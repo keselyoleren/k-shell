@@ -8,7 +8,9 @@
 
 use std::collections::HashMap;
 
-use crate::vault::{new_id, now, Host, Key, VaultData};
+use crate::import::KeyFiles;
+pub use crate::import::Report;
+use crate::vault::{new_id, now, Host, VaultData};
 
 /// Where PuTTY keeps its sessions, under HKEY_CURRENT_USER.
 pub const REGISTRY_PATH: &str = r"Software\SimonTatham\PuTTY\Sessions";
@@ -219,22 +221,10 @@ pub fn read_registry_at(path: &str) -> Result<Vec<Session>, String> {
     Ok(out)
 }
 
-/// What an import did, for the message shown afterwards.
-#[derive(Default, Debug, serde::Serialize)]
-pub struct Report {
-    pub imported: usize,
-    /// Sessions already in the vault (same label in the PuTTY group).
-    pub existing: usize,
-    /// "name: reason" for sessions that were not imported.
-    pub skipped: Vec<String>,
-    /// "name: note" for sessions imported without part of their settings.
-    pub notes: Vec<String>,
-}
-
 /// Add `sessions` to the vault as hosts in the "PuTTY" group.
 pub fn import(data: &mut VaultData, sessions: Vec<Session>) -> Report {
     let mut r = Report::default();
-    let mut key_by_path: HashMap<String, String> = HashMap::new();
+    let mut keys = KeyFiles::default();
     let mut pending_jump: Vec<(String, Session)> = Vec::new();
     for s in sessions {
         if s.protocol != "ssh" {
@@ -245,21 +235,7 @@ pub fn import(data: &mut VaultData, sessions: Vec<Session>) -> Report {
             r.existing += 1;
             continue;
         }
-        let mut key_id = String::new();
-        if !s.key_file.is_empty() {
-            match key_by_path.get(&s.key_file) {
-                Some(id) => key_id = id.clone(),
-                None => match std::fs::read_to_string(&s.key_file) {
-                    Ok(text) => {
-                        let k = key_from_file(&s.key_file, &text);
-                        key_by_path.insert(s.key_file.clone(), k.id.clone());
-                        key_id = k.id.clone();
-                        data.keys.push(k);
-                    }
-                    Err(e) => r.notes.push(format!("{}: key file {} not read ({e})", s.name, s.key_file)),
-                },
-            }
-        }
+        let key_id = keys.id_for(data, &s.key_file, &s.name, &mut r);
         let h = Host {
             id: new_id(),
             label: s.name.clone(),
@@ -313,23 +289,6 @@ pub fn import(data: &mut VaultData, sessions: Vec<Session>) -> Report {
         }
     }
     r
-}
-
-/// A keychain entry for a `.ppk` (or OpenSSH) key file; an encrypted one is kept as is and
-/// asks for its passphrase when used, like keys imported from ~/.ssh/config.
-fn key_from_file(path: &str, text: &str) -> Key {
-    let mut k = crate::keys::import(path, text, "").unwrap_or_else(|_| Key {
-        id: new_id(),
-        kind: "encrypted".into(),
-        private_key: text.to_string(),
-        created_at: now(),
-        ..Default::default()
-    });
-    k.name = std::path::Path::new(&path.replace('\\', "/"))
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string());
-    k
 }
 
 #[cfg(test)]

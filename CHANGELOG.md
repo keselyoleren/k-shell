@@ -22,6 +22,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Password generator in the password editor and in the host editor: 8 to 64 characters, choose lowercase, uppercase,
   digits and symbols, optionally leave out look-alike characters (0 O 1 l I), with a strength estimate. Passwords
   come from the OS random number generator.
+- Import hosts from MobaXterm: pick a `.mxtsessions` export or `MobaXterm.ini` (Hosts → Import, or Settings →
+  Vault). SSH sessions come in with host, port, user, key file, login command, agent forwarding and the comment as
+  notes; folders become groups and SSH gateways become jump hosts (added as hosts when they aren't saved yet). Other
+  session types, proxies and X11 forwarding are listed after the import. (#26)
+- Import hosts from a CSV file: columns are matched by their header (name, host, port, user, group, tags, protocol,
+  notes, in any order), or read as `name,host,port,user,group` without one. Comma or semicolon separated, UTF-8 or
+  Windows-1252. A password column is never imported. (#26)
 
 ## [0.7.0] - 2026-11-15
 
