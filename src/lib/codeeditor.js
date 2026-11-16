@@ -27,7 +27,7 @@ import {
   LanguageDescription,
 } from '@codemirror/language'
 import { languages } from '@codemirror/language-data'
-import { tags as t } from '@lezer/highlight'
+import { tags as t, tagHighlighter, highlightCode } from '@lezer/highlight'
 import { isDarkTheme } from './themes'
 
 // File names language-data doesn't know (or gets wrong): config files and shell dotfiles.
@@ -44,6 +44,42 @@ const BY_NAME = [
 export function languageFor(name) {
   for (const [re, lang] of BY_NAME) if (re.test(name)) return languages.find((l) => l.name === lang) || null
   return LanguageDescription.matchFilename(languages, name)
+}
+
+// Classes for code shown outside an editor (the changes panel); its CSS gives them the
+// terminal theme's colours, like `highlight()` below.
+const tokenClasses = tagHighlighter([
+  { tag: [t.keyword, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], class: 'tk-k' },
+  { tag: [t.modifier, t.self], class: 'tk-k tk-i' },
+  { tag: [t.string, t.special(t.string), t.character, t.docString, t.inserted], class: 'tk-s' },
+  { tag: [t.regexp, t.escape, t.operator, t.derefOperator, t.link, t.url], class: 'tk-o' },
+  { tag: [t.number, t.bool, t.null, t.atom, t.unit, t.changed], class: 'tk-n' },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], class: 'tk-c' },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName, t.heading], class: 'tk-f' },
+  { tag: [t.typeName, t.className, t.namespace, t.standard(t.typeName)], class: 'tk-t' },
+  { tag: [t.propertyName, t.attributeName, t.labelName, t.tagName, t.angleBracket, t.deleted], class: 'tk-p' },
+  { tag: [t.definition(t.variableName), t.constant(t.variableName)], class: 'tk-d' },
+  { tag: [t.meta, t.processingInstruction, t.annotation], class: 'tk-c' },
+])
+
+/**
+ * Syntax colours for `text`, a file called `name` (or part of one): for each line, its pieces
+ * as [text, class]. Null when the file type has no highlighting.
+ */
+export async function highlightLines(name, text) {
+  const desc = languageFor(name)
+  if (!desc) return null
+  const support = await desc.load()
+  const tree = support.language.parser.parse(text)
+  const lines = [[]]
+  highlightCode(
+    text,
+    tree,
+    tokenClasses,
+    (s, cls) => lines.at(-1).push([s, cls]),
+    () => lines.push([]),
+  )
+  return lines
 }
 
 /** Indentation the file already uses: a tab, or 2 / 4 spaces. */

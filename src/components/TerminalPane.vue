@@ -35,8 +35,11 @@ import { createHighlighter } from '../lib/highlight'
 import { joinMultipartImages } from '../lib/iipmultipart'
 import { LineTracker, suggestFor, firstWord, cursorContext } from '../lib/suggest'
 import { Recorder, fmtClock } from '../lib/cast'
+import { MarkStream, tildePath, fmtDuration, boxOptions } from '../lib/blocks'
 import Icon from './Icon.vue'
 import HostStats from './HostStats.vue'
+import CommandBar from './CommandBar.vue'
+import DiffPanel from './DiffPanel.vue'
 
 const props = defineProps({ leaf: Object, tab: Object, visible: Boolean, split: Boolean })
 const emit = defineEmits(['grab'])
@@ -117,7 +120,7 @@ const refreshGhost = () => {
 }
 function computeGhost() {
   ghost.value = null
-  if (!term || S().autosuggest === false || status.value !== 'open' || inj) return
+  if (!term || S().autosuggest === false || status.value !== 'open' || inj || barOn.value) return
   if (!tracker.valid || !tracker.buf) return
   const b = term.buffer.active
   if (b.type !== 'normal' || b.viewportY !== b.baseY) return // full-screen app or scrolled back
@@ -191,7 +194,9 @@ function injectionPlan() {
     s.prompt_enabled && s.prompt_segments?.length && scope !== (local ? 'ssh' : 'local') ? s.prompt_segments : null
   const cwd = s.track_cwd !== false
   const cd = !local && cwd ? props.leaf.cwd || '' : '' // local shells are started in the folder directly
-  return prompt || cwd || cd ? { prompt, cwd, cd } : null
+  const boxScope = boxOptions(s).scope
+  const blocks = !!s.input_bar && boxScope !== (local ? 'ssh' : 'local')
+  return prompt || cwd || cd || blocks ? { prompt, cwd, cd, blocks } : null
 }
 function cancelPrompt() {
   if (!inj) return
@@ -230,9 +235,244 @@ function indexOfBytes(hay, needle) {
 }
 /** Show output from the session (and record it when a recording is running). */
 function put(b) {
+  if (S().input_bar) marks.feed(b)
+  else show(b)
+}
+function show(b) {
   term.write(b)
   rec?.out(b)
 }
+
+// ---------- command input at the bottom ----------
+// With the setting on, a hook marks the shell's prompts and commands (lib/blocks.js): the
+// prompt is kept off screen, commands are typed in CommandBar, and each one is shown as a
+// block (folder and branch, the command, its output, then its time and exit code).
+const cmdBar = ref(null)
+const bar = ref(newBar())
+function newBar() {
+  return { marked: false, phase: 'idle', info: { cwd: '', home: '', git: '', env: '' }, running: null, last: null }
+}
+/** The box is shown: the shell has the hook and the session is open. */
+const barOn = computed(() => !!S().input_bar && bar.value.marked && status.value === 'open')
+/** Command box options from Settings, with their defaults. */
+const box = computed(() => boxOptions(S()))
+const barIdle = () => barOn.value && bar.value.phase === 'idle'
+// A program that takes over the terminal (htop, vim, claude, opencode…) gets the whole pane:
+// the box and its "running" line are hidden until it ends. Such programs switch to the
+// alternate screen, or turn on mouse reports, bracketed paste, application cursor keys, or
+// hide the cursor to draw their own.
+const takeover = ref(false)
+let cursorHidden = false
+const barShown = computed(() => barOn.value && !(bar.value.phase === 'running' && takeover.value))
+function checkTakeover() {
+  if (takeover.value || !barOn.value || bar.value.phase !== 'running' || !term || !box.value.hide_fullscreen) return
+  const m = term.modes
+  if (
+    term.buffer.active.type === 'alternate' ||
+    m.mouseTrackingMode !== 'none' ||
+    m.bracketedPasteMode ||
+    m.applicationCursorKeysMode ||
+    cursorHidden
+  )
+    takeover.value = true
+}
+let block = null // { cmd, start, code, ms, deco } of the command running
+let revealTimer = 0
+let revealFrom = 0
+const decos = []
+const marks = new MarkStream({ show, event: onMark })
+
+function onMark(name, v) {
+  const b = bar.value
+  if (name === 'info') b.info = v
+  else if (name === 'C') {
+    clearTimeout(revealTimer)
+    showCursor(true)
+    takeover.value = false
+    b.phase = 'running'
+    if (block) block.start = performance.now()
+    else b.running = { cmd: '', since: Date.now() }
+  } else if (name === 'D') {
+    if (b.phase !== 'running') return
+    const ms = block ? performance.now() - block.start : null
+    b.last = { code: v, ms }
+    if (block) {
+      block.code = v
+      block.ms = ms
+      paintBlock(block)
+    }
+    block = null
+  } else if (name === 'A') {
+    refreshChanges()
+    clearTimeout(revealTimer)
+    const first = !b.marked
+    b.marked = true
+    b.phase = 'idle'
+    b.running = null
+    block = null
+    ghost.value = null
+    if (first) tracker.reset()
+    showCursor(false)
+    takeover.value = false
+    if (focused.value && props.visible) nextTick(() => barIdle() && cmdBar.value?.focus())
+  }
+}
+/**
+ * The terminal's cursor: hidden while the shell waits (you type in the box), shown again when
+ * a command runs. Written to the screen only; the shell never sees it.
+ */
+function showCursor(on) {
+  // at the prompt, also undo the line editor's modes: their "off" was kept off screen with it
+  term?.write(on ? '\x1b[?25h' : '\x1b[?25l\x1b[?2004l\x1b[?1l')
+}
+
+const clean = (s) => s.replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')
+/** Write the head of a block (where, then the command) and mark it for its time and exit code. */
+function writeHead(cmd) {
+  const b = term.buffer.active
+  const i = bar.value.info
+  const o = box.value
+  const where = o.head_where
+    ? [i.env && `(${i.env})`, tildePath(i.cwd, i.home), i.git && `git:(${i.git})`].filter(Boolean).join(' ')
+    : ''
+  let pre = b.cursorX > 0 ? '\r\n' : ''
+  if (b.baseY + b.cursorY > 0 && (o.head_rule || o.head_where)) pre += '\r\n' // a blank line between blocks
+  const blk = { cmd, start: performance.now(), code: null, ms: null, deco: null }
+  term.write(pre, () => {
+    const m = term.registerMarker(0)
+    const d = m && term.registerDecoration({ marker: m, width: term.cols, layer: 'top' })
+    if (!d) return m?.dispose()
+    blk.deco = d
+    d.onRender((el) => {
+      el.classList.add('kblock')
+      el.style.width = '100%'
+      paintBlock(blk, el)
+    })
+    decos.push(d)
+    if (decos.length > 500) decos.shift().dispose()
+  })
+  const head =
+    (where ? `\x1b[2m${clean(where)}\x1b[22m\r\n` : '') + `\x1b[1m${clean(cmd).replace(/\n/g, '\r\n')}\x1b[22m\r\n`
+  term.write(head)
+  rec?.out(new TextEncoder().encode(pre + head))
+  return blk
+}
+function paintBlock(blk, el = blk.deco?.element) {
+  if (!el) return
+  const o = box.value
+  el.dataset.meta =
+    blk.ms == null || !o.head_time
+      ? ''
+      : blk.code
+        ? `exit ${blk.code} · ${fmtDuration(blk.ms)}`
+        : `(${fmtDuration(blk.ms)})`
+  el.classList.toggle('bad', !!blk.code && o.head_time)
+  el.classList.toggle('norule', !o.head_rule)
+}
+
+/** Run a command typed in the box. */
+function submit(text) {
+  const cmd = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '')
+  if (!cmd.trim() || !barIdle()) return
+  remember(cmd)
+  block = writeHead(cmd)
+  // ^U first: anything typed into the shell's own line while the last command ran is dropped
+  const line = cmd.includes('\n') && marks.paste ? `\x1b[200~${cmd}\x1b[201~` : cmd.replace(/\n/g, '\r')
+  revealFrom = marks.held.length
+  write('\x15' + line + '\r')
+  if (props.tab.broadcast) for (const p of broadcastPeers(props.tab, props.leaf.id)) p.write(cmd + '\r')
+  bar.value.phase = 'running'
+  bar.value.running = { cmd, since: Date.now() }
+  // No mark back (the command isn't complete, so the shell asks for more, or it asks
+  // something before running it): show what the shell printed and let keys go to it.
+  clearTimeout(revealTimer)
+  revealTimer = setTimeout(() => {
+    if (!marks.hidden || bar.value.phase !== 'running') return
+    showCursor(true)
+    marks.reveal(revealFrom)
+  }, 1200)
+  term.focus()
+}
+/** Text for the box from a paste, a snippet or another pane, while it is shown. */
+function toBar(t, run = false) {
+  if (run) return submit(t)
+  cmdBar.value?.insert(t)
+}
+/** Names in a folder of the machine the shell runs on, for Tab in the box. */
+const listDir = (dir) => api.path_list({ host: target.kind === 'local' ? null : target.host, dir })
+/** Git branches of the repository the shell is in, for the branch chip. */
+const listBranches = (dir) => api.git_branches({ host: target.kind === 'local' ? null : target.host, dir })
+
+// ---------- uncommitted git changes: the chip of the box, and the panel it opens ----------
+const changes = ref(null) // { files, added, removed }
+const diffOpen = ref(false)
+const diffVersion = ref(0)
+const diffWidth = ref(50) // % of the pane the changes panel takes
+let changesBusy = false
+let changesAgain = false
+let changesStale = false
+let changesKey = ''
+/**
+ * Count the changes again; the shell has just come back to its prompt. One git run at a time
+ * (prompts in a row share the next one), and none while the pane is out of sight: it counts
+ * when it is shown again.
+ */
+async function refreshChanges() {
+  const i = bar.value.info
+  if (!i.git) {
+    changes.value = null
+    diffOpen.value = false
+    changesKey = ''
+    return
+  }
+  if (!props.visible) return void (changesStale = true)
+  if (changesBusy) return void (changesAgain = true)
+  changesBusy = true
+  changesStale = false
+  try {
+    const list = await api.git_changes({ host: target.kind === 'local' ? null : target.host, dir: i.cwd })
+    const key = i.cwd + '\n' + list.map((c) => `${c.path}\t${c.added}\t${c.removed}`).join('\n')
+    if (key !== changesKey) {
+      changesKey = key
+      changes.value = {
+        files: list.length,
+        added: list.reduce((n, c) => n + c.added, 0),
+        removed: list.reduce((n, c) => n + c.removed, 0),
+      }
+    }
+    // the panel reads the diff again (it skips the work itself when the text is the same)
+    if (diffOpen.value) diffVersion.value++
+  } catch {
+    changes.value = null
+    changesKey = ''
+  } finally {
+    changesBusy = false
+  }
+  if (changesAgain) {
+    changesAgain = false
+    refreshChanges()
+  }
+}
+watch(
+  () => props.visible,
+  (v) => v && changesStale && refreshChanges(),
+)
+const loadDiff = () => api.git_diff({ host: target.kind === 'local' ? null : target.host, dir: bar.value.info.cwd })
+function focusPane() {
+  if (barIdle()) cmdBar.value?.focus()
+  else term?.focus()
+}
+watch(
+  () => !!S().input_bar,
+  (on) => {
+    if (on) return
+    // turned off: show the prompt that was kept off screen, and the shell is used as usual
+    if (marks.hidden) marks.reveal()
+    showCursor(true)
+    bar.value = newBar()
+    block = null
+  },
+)
 function output(b) {
   if (!inj) return put(b)
   if (inj.phase === 'wait') {
@@ -302,6 +542,12 @@ async function connect() {
   message.value = ''
   cancelPrompt()
   tracker.reset()
+  marks.reset()
+  bar.value = newBar()
+  changes.value = null
+  diffOpen.value = false
+  block = null
+  clearTimeout(revealTimer)
   const plan = injectionPlan()
   if (plan) armPrompt(id, plan)
   const ch = new Channel()
@@ -542,7 +788,9 @@ function onDragDrop(ev) {
     dropping.value = false
     if (!hit || !p.paths?.length) return
     props.tab.focus = props.leaf.id
-    term.paste(p.paths.map(shellQuote).join(' ') + ' ')
+    const paths = p.paths.map(shellQuote).join(' ') + ' '
+    if (barIdle()) return toBar(paths)
+    term.paste(paths)
     term.focus()
   } else dropping.value = false
 }
@@ -555,6 +803,7 @@ async function paste() {
     return
   }
   if (!t) return
+  if (barIdle()) return toBar(t.replace(/\r\n?/g, '\n')) // nothing runs until Enter
   // Several lines run as several commands the moment they land in a shell: ask first.
   if (S().paste_warn !== false && /[\r\n]/.test(t)) {
     const lines = t.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n')
@@ -729,6 +978,8 @@ onMounted(async () => {
 
   term.onData((d) => {
     if (status.value === 'open') {
+      // the shell waits for a command: what is typed here goes to the box
+      if (barIdle() && !AUTOMATIC.test(d)) return cmdBar.value?.key(d)
       track(d)
       return typed(d)
     }
@@ -743,6 +994,13 @@ onMounted(async () => {
   // (onKey, not onData — onData also carries the terminal's automatic replies to shell queries.)
   term.onKey(() => inj?.phase === 'wait' && cancelPrompt())
   term.onWriteParsed(refreshGhost)
+  term.onWriteParsed(checkTakeover)
+  // follow whether the program hid the cursor (xterm doesn't say); handled as usual after
+  for (const final of ['h', 'l'])
+    term.parser.registerCsiHandler({ prefix: '?', final }, (params) => {
+      if (params.includes(25)) cursorHidden = final === 'l'
+      return false
+    })
   term.onCursorMove(refreshGhost)
   term.onScroll(refreshGhost)
   term.onResize(refreshGhost)
@@ -809,16 +1067,19 @@ onMounted(async () => {
 
   panes.set(props.leaf.id, {
     write: (t) => {
+      // a snippet ending in a line break runs; one without waits in the box for Enter
+      if (barIdle()) return toBar(t.replace(/[\r\n]+$/, ''), /[\r\n]$/.test(t))
       tracker.reset() // snippets run as whole commands
       write(t)
     },
     /** Keystrokes broadcast from another pane of the tab. */
     input: (d) => {
       if (status.value !== 'open') return // never reconnect a closed pane from another pane's Enter
+      if (barIdle() && !AUTOMATIC.test(d)) return cmdBar.value?.key(d)
       track(d)
       write(d)
     },
-    focus: () => term.focus(),
+    focus: focusPane,
     toggleRecording,
     toggleStats,
     term,
@@ -833,7 +1094,7 @@ onMounted(async () => {
   await nextTick()
   doFit()
   connect()
-  if (focused.value) term.focus()
+  if (focused.value) focusPane()
 })
 
 watch(
@@ -844,7 +1105,7 @@ watch(
       nextTick(() => {
         attachGl()
         doFit()
-        if (focused.value) term?.focus()
+        if (focused.value) focusPane()
       })
     else glTimer = setTimeout(releaseGl, GL_IDLE_MS)
   },
@@ -854,7 +1115,7 @@ watch(
   (d) => !d && scheduleFit(),
 )
 watch(focused, (f) => {
-  if (f && props.visible) term?.focus()
+  if (f && props.visible) focusPane()
 })
 watch(
   () => [store.vault.settings, store.systemDark],
@@ -870,6 +1131,7 @@ watch(
 onBeforeUnmount(() => {
   stopRecording({ quiet: true }) // a closed pane keeps what was recorded
   cancelPrompt()
+  clearTimeout(revealTimer)
   cancelAnimationFrame(ghostRaf)
   ro?.disconnect()
   cancelAnimationFrame(raf)
@@ -891,8 +1153,20 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="tp"
-    :class="{ focused: focused && split, broadcasting, dropping, ringing, withstats: showStats }"
-    :style="{ background: theme().background }"
+    :class="{
+      focused: focused && split,
+      broadcasting,
+      dropping,
+      ringing,
+      withstats: showStats,
+      withdiff: diffOpen && barOn,
+    }"
+    :style="{
+      background: theme().background,
+      '--term-bg': theme().background,
+      '--term-fg': theme().foreground,
+      '--diff-w': diffWidth + '%',
+    }"
   >
     <div
       v-if="split"
@@ -976,7 +1250,42 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div class="body">
-      <div ref="el" class="xt"></div>
+      <div class="termcol">
+        <div ref="el" class="xt"></div>
+        <CommandBar
+          v-if="barShown"
+          ref="cmdBar"
+          :phase="bar.phase"
+          :info="bar.info"
+          :running="bar.running"
+          :last="bar.last"
+          :target="histTarget"
+          :list="listDir"
+          :branches="listBranches"
+          :changes="changes"
+          :changes-open="diffOpen"
+          :options="box"
+          :colors="theme()"
+          :font="{ family: S().font_family || 'Menlo, monospace', size: S().font_size || 13 }"
+          @mousedown="tab.focus = leaf.id"
+          @submit="submit"
+          @send="typed"
+          @clear="term.clear()"
+          @find="openSearch"
+          @focus-term="term.focus()"
+          @changes="diffOpen = !diffOpen"
+        />
+      </div>
+      <DiffPanel
+        v-if="diffOpen && barOn"
+        :info="bar.info"
+        :load="loadDiff"
+        :version="diffVersion"
+        :colors="theme()"
+        :font="{ family: S().font_family || 'Menlo, monospace', size: S().font_size || 13 }"
+        @close="diffOpen = false"
+        @width="diffWidth = $event"
+      />
       <HostStats
         v-if="showStats"
         :host="target.host"
@@ -1056,11 +1365,52 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: flex;
 }
+.termcol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
 .xt {
   flex: 1;
   min-width: 0;
   min-height: 0;
   padding: 6px 4px 4px 10px;
+}
+/* head of a command block (input at the bottom): a rule above it, time and exit code at the right */
+.xt :deep(.kblock) {
+  pointer-events: none;
+  border-top: 1px solid rgba(127, 127, 127, 0.22);
+  margin-top: -1px;
+}
+/* the time sits on the terminal's background, so a long folder line runs under it instead of through it */
+.xt :deep(.kblock)::after {
+  content: attr(data-meta);
+  position: absolute;
+  right: 12px; /* clear of the scrollbar */
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 4px 0 22px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--term-fg) 55%, var(--term-bg));
+  background: linear-gradient(to right, transparent, var(--term-bg) 18px);
+}
+.xt :deep(.kblock.norule),
+.xt :deep(.kblock.norule.bad) {
+  border-top-color: transparent;
+}
+.xt :deep(.kblock[data-meta=''])::after {
+  display: none;
+}
+.xt :deep(.kblock.bad) {
+  border-top-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.xt :deep(.kblock.bad)::after {
+  color: var(--danger);
 }
 .ph {
   height: 26px;
@@ -1153,6 +1503,12 @@ onBeforeUnmount(() => {
 .tp.withstats .loading,
 .tp.withstats .recbadge.float {
   right: 278px;
+}
+.tp.withdiff .tools,
+.tp.withdiff .find,
+.tp.withdiff .loading,
+.tp.withdiff .recbadge.float {
+  right: calc(var(--diff-w, 50%) + 14px);
 }
 .ph .iconbtn.on {
   color: var(--accent);

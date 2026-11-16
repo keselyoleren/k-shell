@@ -29,6 +29,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Import hosts from a CSV file: columns are matched by their header (name, host, port, user, group, tags, protocol,
   notes, in any order), or read as `name,host,port,user,group` without one. Comma or semicolon separated, UTF-8 or
   Windows-1252. A password column is never imported. (#26)
+- Terminal: commands can be typed in a box at the bottom of the terminal, with each command shown above it as a block
+  (folder and branch, the command, its output, then its time and exit code). Turn it on in Settings → Terminal →
+  Command input. Works in zsh and bash 4.4 or newer, on this computer and over SSH; other shells keep the normal
+  prompt.
+  - ↑/↓ go through history, suggestions come from history and snippets, Tab completes file and folder names (only
+    folders after `cd`), Shift+Enter adds a line. Pastes and dropped files wait in the box until Enter (snippets ending in a line break
+    run at once).
+  - Chips above the input can show the Python environment, user, host, folder, git branch, uncommitted changes, the
+    exit code and time of the last command, and the clock. Click the folder to go to another one and the branch to switch.
+  - Click the changes to see the uncommitted diff next to the terminal: each file with line numbers and syntax
+    colours, and a list of the files. Drag its edge to resize it.
+  - While a command runs, keys go to it. Programs that take over the terminal (htop, vim, claude, opencode…) get the
+    whole pane until they end.
+  - Pick and order the chips in an editor like the prompt editor, choose what each block shows, and which sessions
+    use the box (all, local or SSH).
 
 ## [0.7.0] - 2026-11-15
 

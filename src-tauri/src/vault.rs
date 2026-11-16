@@ -221,6 +221,10 @@ pub struct Settings {
     pub local_cwd: String,
     /// Follow the shell's working directory (OSC 7; a small hook is added to bash/zsh).
     pub track_cwd: bool,
+    /// Type commands in a box under the output, each run shown as a block (bash 4.4+ / zsh).
+    pub input_bar: bool,
+    /// What the command box shows and does.
+    pub command_box: CommandBox,
     /// Write a plain-text log of every terminal session.
     pub session_log: bool,
     /// Folder for session logs ("" = Documents/K-Shell Logs).
@@ -240,6 +244,42 @@ pub struct Settings {
     pub lock_on_sleep: bool,
     /// Seconds before a copied password or private key is cleared from the clipboard (0 = never).
     pub clipboard_clear_secs: u32,
+}
+
+/// Options of the command box (Settings → Terminal → Command input).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct CommandBox {
+    /// Sessions that use it: "all" | "local" | "ssh".
+    pub scope: String,
+    /// Chips above the input, in order (ids in src/lib/blocks.js BOX_CHIPS).
+    pub chips: Vec<String>,
+    /// Head of each command block: the folder and branch line, the time and exit code, and
+    /// the rule between blocks.
+    pub head_where: bool,
+    pub head_time: bool,
+    pub head_rule: bool,
+    /// Tab completes file and folder names; `cd` suggests folders that are there.
+    pub path_complete: bool,
+    /// Shortcut hints next to the chips.
+    pub hints: bool,
+    /// Hide the box while a program that takes over the terminal (htop, vim…) runs.
+    pub hide_fullscreen: bool,
+}
+
+impl Default for CommandBox {
+    fn default() -> Self {
+        CommandBox {
+            scope: "all".into(),
+            chips: ["env", "cwd", "git", "changes", "exit"].map(String::from).to_vec(),
+            head_where: true,
+            head_time: true,
+            head_rule: true,
+            path_complete: true,
+            hints: true,
+            hide_fullscreen: true,
+        }
+    }
 }
 
 /// Terminal output highlighting: words (comma separated) or a regular expression, drawn in
@@ -308,6 +348,8 @@ impl Default for Settings {
             local_shell: String::new(),
             local_cwd: String::new(),
             track_cwd: true,
+            input_bar: false,
+            command_box: CommandBox::default(),
             session_log: false,
             log_dir: String::new(),
             highlight: true,
@@ -909,6 +951,22 @@ pub fn upsert<T: HasId + Clone>(list: &mut Vec<T>, mut item: T) -> T {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_box_options_default_to_on() {
+        // settings saved before the options existed, and with only some of them
+        let old: Settings = serde_json::from_str(r#"{"input_bar":true}"#).unwrap();
+        assert_eq!(old.command_box, CommandBox::default());
+        let some: Settings = serde_json::from_str(
+            r#"{"command_box":{"chips":["git","cwd"],"head_time":false,"scope":"ssh"}}"#,
+        )
+        .unwrap();
+        assert_eq!(some.command_box.chips, ["git", "cwd"]);
+        assert!(
+            !some.command_box.head_time && some.command_box.head_where && some.command_box.hide_fullscreen
+        );
+        assert_eq!(some.command_box.scope, "ssh");
+    }
 
     #[test]
     fn seal_roundtrip_and_tamper_detection() {

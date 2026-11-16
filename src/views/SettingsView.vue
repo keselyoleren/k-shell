@@ -15,6 +15,8 @@ import Icon from '../components/Icon.vue'
 import ShortcutEditor from '../components/ShortcutEditor.vue'
 import PromptEditor from '../components/PromptEditor.vue'
 import { SEGMENTS, DEFAULT_PROMPT } from '../lib/prompt'
+import { BOX_DEFAULTS, BOX_CHIPS, boxOptions } from '../lib/blocks'
+import CommandBoxEditor from '../components/CommandBoxEditor.vue'
 
 // Edited in place; lib/store.js persists every change.
 const s = computed(() => store.vault.settings)
@@ -100,6 +102,24 @@ const promptLines = computed(() => {
   return out
 })
 const segColor = (id) => termTheme()[ANSI[SEGMENTS[id].color]]
+
+// ---------- command input ----------
+
+const box = computed(() => boxOptions(s.value))
+/** Turn a command box option on or off (the settings object is created on first change). */
+function setBox(key, v) {
+  s.value.command_box = { ...box.value, [key]: v }
+}
+const editingBox = ref(false)
+const boxChipColor = (id) => termTheme()[ANSI[BOX_CHIPS[id]?.color ?? 7]]
+const BOX_HEADS = [
+  ['head_where', 'Folder & branch'],
+  ['head_time', 'Time & exit code'],
+  ['head_rule', 'Divider'],
+]
+const boxIsDefault = computed(() =>
+  Object.keys(BOX_DEFAULTS).every((k) => String(box.value[k]) === String(BOX_DEFAULTS[k])),
+)
 
 // ---------- autosuggestions ----------
 
@@ -643,6 +663,136 @@ async function importVault() {
             </div>
           </div>
           <PromptEditor v-if="editingPrompt" @close="editingPrompt = false" />
+
+          <div class="section-title">Command input</div>
+          <div class="card pad">
+            <div class="set">
+              <div>
+                <b>Type commands at the bottom</b>
+                <div class="dim">
+                  Commands are typed in a box under the output, which stays at the bottom, and each one is shown as a
+                  block with its folder, git branch, time and exit code. While a command runs, keys go to it as usual.
+                  Works in zsh and bash 4.4 or newer (not the bash 3.2 that comes with macOS); other shells keep the
+                  normal prompt. Applies to terminals opened after turning it on.
+                </div>
+              </div>
+              <button class="switch" :class="{ on: s.input_bar }" @click="s.input_bar = !s.input_bar"></button>
+            </div>
+            <div class="set col" :class="{ off: !s.input_bar }">
+              <div
+                class="boxprev mono"
+                title="Edit the chips above the input"
+                @click="editingBox = true"
+                :style="{
+                  background: termTheme().background,
+                  color: termTheme().foreground,
+                  '--fg': termTheme().foreground,
+                  '--ok': termTheme().green,
+                  '--bad': termTheme().red,
+                }"
+              >
+                <div class="blk" :class="{ rule: box.head_rule }">
+                  <div v-if="box.head_where || box.head_time" class="head">
+                    <span v-if="box.head_where" class="dim2">(base) ~/project/api git:(main)</span>
+                    <span v-if="box.head_time" class="time">(0.032s)</span>
+                  </div>
+                  <b>git status</b>
+                  <div class="dim2">On branch main · nothing to commit, working tree clean</div>
+                </div>
+                <div class="bar">
+                  <div class="chips">
+                    <span
+                      v-for="id in box.chips.filter((c) => BOX_CHIPS[c])"
+                      :key="id"
+                      class="chip"
+                      :style="id === 'changes' ? null : { color: id === 'exit' ? termTheme().red : boxChipColor(id) }"
+                    >
+                      <template v-if="id === 'changes'">3 • <i class="add">+42</i> <i class="del">-7</i></template>
+                      <template v-else>{{ BOX_CHIPS[id].sample }}</template>
+                    </span>
+                    <span class="grow"></span>
+                    <span v-if="box.hints" class="dim2 hints"
+                      ><template v-if="box.path_complete">⇥ complete path · </template>⇧↵ new line · ↑ history</span
+                    >
+                  </div>
+                  <div class="dim2">Type a command</div>
+                </div>
+                <span class="editbtn"><Icon name="edit" :size="13" /> Edit chips</span>
+              </div>
+            </div>
+            <div class="set" :class="{ off: !s.input_bar }">
+              <div>
+                <b>Apply to</b>
+                <div class="dim">New sessions only</div>
+              </div>
+              <div class="seg">
+                <button
+                  v-for="[v, l] in [
+                    ['all', 'All sessions'],
+                    ['local', 'Local'],
+                    ['ssh', 'SSH'],
+                  ]"
+                  :key="v"
+                  :class="{ on: box.scope === v }"
+                  @click="setBox('scope', v)"
+                >
+                  {{ l }}
+                </button>
+              </div>
+            </div>
+            <div class="set" :class="{ off: !s.input_bar }">
+              <div>
+                <b>Command blocks</b>
+                <div class="dim">What each command shows above its output</div>
+              </div>
+              <div class="seg multi">
+                <button v-for="[k, l] in BOX_HEADS" :key="k" :class="{ on: box[k] }" @click="setBox(k, !box[k])">
+                  <Icon :name="box[k] ? 'check' : 'plus'" :size="11" />{{ l }}
+                </button>
+              </div>
+            </div>
+            <div class="set" :class="{ off: !s.input_bar }">
+              <div>
+                <b>Complete paths with Tab</b>
+                <div class="dim">
+                  Tab completes file and folder names, and <code>cd</code> suggests folders that are there. When off,
+                  Tab accepts the suggestion from your history
+                </div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: box.path_complete }"
+                @click="setBox('path_complete', !box.path_complete)"
+              ></button>
+            </div>
+            <div class="set" :class="{ off: !s.input_bar }">
+              <div>
+                <b>Give full-screen programs the whole terminal</b>
+                <div class="dim">
+                  Hide the box while a program such as htop, vim, claude or opencode runs, and bring it back when it
+                  ends
+                </div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: box.hide_fullscreen }"
+                @click="setBox('hide_fullscreen', !box.hide_fullscreen)"
+              ></button>
+            </div>
+            <div class="set" :class="{ off: !s.input_bar }">
+              <div>
+                <b>Show shortcut hints</b>
+                <div class="dim">Keys for completing, new lines and history, next to the chips</div>
+              </div>
+              <button class="switch" :class="{ on: box.hints }" @click="setBox('hints', !box.hints)"></button>
+            </div>
+            <div v-if="!boxIsDefault" class="set" :class="{ off: !s.input_bar }">
+              <div class="dim">Some options are changed</div>
+              <button class="btn" @click="s.command_box = { ...BOX_DEFAULTS }">Reset to defaults</button>
+            </div>
+          </div>
+
+          <CommandBoxEditor v-if="editingBox" @close="editingBox = false" />
 
           <div class="section-title">Autosuggestions</div>
           <div class="card pad">
@@ -1512,6 +1662,82 @@ async function importVault() {
 .set.off {
   opacity: 0.5;
 }
+/* command input preview: a block and the box, as set below */
+.boxprev {
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.55;
+  overflow: hidden;
+}
+.boxprev .blk {
+  padding: 10px 14px;
+}
+.boxprev .blk.rule {
+  border-top: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  margin-top: 10px;
+}
+.boxprev .head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.boxprev .time {
+  opacity: 0.55;
+  font-size: 11px;
+}
+.boxprev .dim2 {
+  opacity: 0.55;
+}
+.boxprev .bar {
+  padding: 8px 14px 10px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+}
+.boxprev .chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+}
+.boxprev .chip {
+  padding: 1px 7px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.boxprev .chip.git,
+.boxprev .add {
+  color: var(--ok);
+}
+.boxprev .del {
+  color: var(--bad);
+}
+.boxprev i {
+  font-style: normal;
+}
+.boxprev .grow {
+  flex: 1;
+}
+.boxprev .hints {
+  font-family: var(--font, system-ui);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.seg.multi {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.seg.multi button:not(.on) {
+  opacity: 0.7;
+}
 .promptprev {
   position: relative;
   padding: 12px 14px;
@@ -1522,7 +1748,8 @@ async function importVault() {
   white-space: pre-wrap;
   cursor: pointer;
 }
-.promptprev:hover {
+.promptprev:hover,
+.boxprev:hover {
   border-color: var(--accent);
 }
 .editbtn {

@@ -1,6 +1,7 @@
 // K-Shell prompt: the user picks segments in Settings; we turn them into a small bash/zsh
 // snippet that installs a prompt hook. TerminalPane types it into new sessions and hides
 // the echo (see MARKER).
+import { BLOCKS_SCRIPT } from './blocks'
 
 /** Longest directory shown by the "Directory" segment; longer paths become "…tail". */
 export const CWD_MAX = 40
@@ -132,14 +133,16 @@ export const CWD_SCRIPT = [
  *   prompt: segment ids of the K-Shell prompt (or null)
  *   cwd:    report the working directory (OSC 7)
  *   cd:     folder to change to first (reconnect / reopened tab)
+ *   blocks: mark prompts and commands for the input at the bottom (lib/blocks.js)
  * Shells other than bash/zsh skip the eval (fish parses it but the test is false) and still
  * print the marker so the echo can be hidden.
  */
-export function promptInjection({ prompt = null, cwd = false, cd = '' } = {}) {
+export function promptInjection({ prompt = null, cwd = false, cd = '', blocks = false } = {}) {
   const parts = []
   if (cd) parts.push(`cd -- ${sq(cd)} 2>/dev/null`)
   if (cwd) parts.push(CWD_SCRIPT)
   if (prompt?.length) parts.push(promptScript(prompt))
+  if (blocks) parts.push(BLOCKS_SCRIPT) // last: its hooks go around the others
   // bash: drop the typed line from history (it contains the marker text 7770). zsh adds the
   // line before we run, so it stays unless the user has HIST_IGNORE_SPACE.
   parts.push(

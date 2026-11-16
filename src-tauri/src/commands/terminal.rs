@@ -220,6 +220,201 @@ pub async fn ssh_exec(st: State<'_>, host: Host, command: String) -> Res<Value> 
     Ok(json!({ "output": output, "code": code }))
 }
 
+/// Names in a folder, for completing paths in the command box; folders end in "/".
+/// `host` None: this computer. A folder that can't be read gives an empty list.
+#[tauri::command]
+pub async fn path_list(st: State<'_>, host: Option<Host>, dir: String) -> Res<Vec<String>> {
+    const MAX: usize = 5000;
+    match host {
+        Some(h) => {
+            let conn = st.pool.get(&st.vault, &h).await?;
+            // -p marks folders, -L follows links so a link to a folder counts as one
+            let cmd = format!("LC_ALL=C ls -1ApL -- {} 2>/dev/null", crate::containers::sh_join(&[dir]));
+            let (out, _) = conn.exec(&cmd).await?;
+            Ok(out.lines().filter(|l| !l.is_empty()).take(MAX).map(String::from).collect())
+        }
+        None => tokio::task::spawn_blocking(move || {
+            let mut names: Vec<String> = std::fs::read_dir(&dir)
+                .map(|rd| {
+                    rd.flatten()
+                        .take(MAX)
+                        .map(|e| {
+                            let mut n = e.file_name().to_string_lossy().into_owned();
+                            if e.path().is_dir() {
+                                n.push('/');
+                            }
+                            n
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            names.sort();
+            names
+        })
+        .await
+        .map_err(|e| e.to_string()),
+    }
+}
+
+/// Local branches of the git repository at `dir`, most recently committed first.
+/// `host` None: this computer. Not a repository (or no git) gives an empty list.
+#[tauri::command]
+pub async fn git_branches(st: State<'_>, host: Option<Host>, dir: String) -> Res<Vec<String>> {
+    let argv: Vec<String> = [
+        "git",
+        "-C",
+        &dir,
+        "for-each-ref",
+        "--sort=-committerdate",
+        "--format=%(refname:short)",
+        "refs/heads",
+    ]
+    .map(String::from)
+    .to_vec();
+    let out = match host {
+        Some(h) => {
+            let conn = st.pool.get(&st.vault, &h).await?;
+            let cmd = format!("{} 2>/dev/null", crate::containers::sh_join(&argv));
+            conn.exec(&cmd).await?.0
+        }
+        None => tokio::task::spawn_blocking(move || {
+            std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default()
+        })
+        .await
+        .map_err(|e| e.to_string())?,
+    };
+    Ok(out.lines().map(str::trim).filter(|l| !l.is_empty()).take(1000).map(String::from).collect())
+}
+
+/// Output of a POSIX shell script run on `host` (None: this computer); stderr is not kept.
+async fn run_sh(st: &State<'_>, host: Option<Host>, script: String) -> Res<String> {
+    match host {
+        Some(h) => {
+            let conn = st.pool.get(&st.vault, &h).await?;
+            Ok(conn.exec(&script).await?.0)
+        }
+        None => tokio::task::spawn_blocking(move || {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .stderr(std::process::Stdio::null())
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?,
+    }
+}
+
+/// Shell lines that enter the repository at `dir` and set `$base`: HEAD, or the index in a
+/// repository without commits yet. Outside a repository the script ends there.
+fn git_prelude(dir: &str) -> String {
+    format!(
+        "cd -- {} 2>/dev/null || exit 0\n\
+         git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0\n\
+         g() {{ git -c core.quotePath=false \"$@\" 2>/dev/null; }}\n\
+         if git rev-parse -q --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=--cached; fi\n",
+        crate::containers::sh_join(&[dir.to_string()])
+    )
+}
+
+/// Untracked files (not ignored) the change views include, at most this many.
+const UNTRACKED_MAX: usize = 200;
+
+/// One changed file of a working tree.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct Change {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+    /// Not tracked by git yet.
+    pub untracked: bool,
+    pub binary: bool,
+}
+
+/// `git diff --numstat` lines, then "\x01" and `added\tremoved\tpath` lines for untracked files.
+fn parse_changes(out: &str) -> Vec<Change> {
+    let mut untracked = false;
+    let mut v = Vec::new();
+    for line in out.lines() {
+        if line == "\x01" {
+            untracked = true;
+            continue;
+        }
+        let mut p = line.splitn(3, '\t');
+        let (Some(a), Some(r), Some(path)) = (p.next(), p.next(), p.next()) else { continue };
+        v.push(Change {
+            path: path.to_string(),
+            added: a.parse().unwrap_or(0),
+            removed: r.parse().unwrap_or(0),
+            untracked,
+            binary: a == "-",
+        });
+    }
+    v
+}
+
+/// Files changed in the working tree at `dir` against the last commit, untracked ones included.
+/// Not a repository: an empty list.
+#[tauri::command]
+pub async fn git_changes(st: State<'_>, host: Option<Host>, dir: String) -> Res<Vec<Change>> {
+    let script = format!(
+        "{}g diff $base --numstat --no-renames --no-ext-diff\nprintf '\\001\\n'\n\
+         g ls-files --others --exclude-standard | head -n {UNTRACKED_MAX} | while IFS= read -r f; do\n\
+         [ -f \"$f\" ] || continue\n\
+         if grep -Iq . \"$f\" 2>/dev/null || [ ! -s \"$f\" ]; then printf '%s\\t0\\t%s\\n' \"$(wc -l < \"$f\" | tr -d ' ')\" \"$f\"\n\
+         else printf -- '-\\t-\\t%s\\n' \"$f\"; fi\ndone\n",
+        git_prelude(&dir)
+    );
+    Ok(parse_changes(&run_sh(&st, host, script).await?))
+}
+
+/// The changes of `git_changes` as a unified diff: tracked files against the last commit,
+/// then each untracked file as new. Cut at 8 MB.
+#[tauri::command]
+pub async fn git_diff(st: State<'_>, host: Option<Host>, dir: String) -> Res<String> {
+    const MAX: usize = 8 << 20;
+    let script = format!(
+        "{}g diff $base --no-color --no-ext-diff --no-renames -U3\n\
+         g ls-files --others --exclude-standard | head -n {UNTRACKED_MAX} | while IFS= read -r f; do\n\
+         [ -f \"$f\" ] && g diff --no-index --no-color --no-ext-diff -- /dev/null \"$f\"\ndone\n",
+        git_prelude(&dir)
+    );
+    let mut out = run_sh(&st, host, script).await?;
+    if out.len() > MAX {
+        let mut cut = MAX;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_numstat_and_untracked_files() {
+        let out = "12\t3\tsrc/a.rs\n-\t-\tlogo.png\n\x01\n40\t0\tsrc/new file.js\n-\t-\tfont.woff\n";
+        let v = parse_changes(out);
+        assert_eq!(v.len(), 4);
+        assert_eq!(
+            (v[0].path.as_str(), v[0].added, v[0].removed, v[0].untracked),
+            ("src/a.rs", 12, 3, false)
+        );
+        assert!(v[1].binary && !v[1].untracked);
+        assert_eq!((v[2].path.as_str(), v[2].added, v[2].untracked), ("src/new file.js", 40, true));
+        assert!(v[3].binary && v[3].untracked);
+    }
+}
+
 /// Open a fresh connection (bypassing the pool) and report how long it took.
 #[tauri::command]
 pub async fn ssh_test(st: State<'_>, host: Host) -> Res<String> {
