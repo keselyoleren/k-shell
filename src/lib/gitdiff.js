@@ -14,6 +14,7 @@ export function parseDiff(text) {
   let o = 0
   let n = 0
   let lastOld = 0 // first old line after the previous hunk
+  let left = 0
   const unquote = (p) => p.replace(/^"(.*)"$/, '$1')
   for (const line of text.split('\n')) {
     if (line.startsWith('diff --git ')) {
@@ -40,11 +41,16 @@ export function parseDiff(text) {
       n = +hh[3]
       const start = +hh[2] === 0 ? o + 1 : o // "-0,0": nothing before
       h = { skipped: Math.max(0, start - lastOld), lines: [] }
+      left = (hh[2] == null ? 1 : +hh[2]) + (hh[4] == null ? 1 : +hh[4]) // lines the hunk still has, old + new
       f.hunks.push(h)
       continue
     }
     if (!h) continue
-    const t = line[0]
+    // an empty unchanged line can come without its leading space (diff.suppressBlankEmpty)
+    const t = line === '' && left > 1 ? ' ' : line[0]
+    if (t === '+') left--
+    else if (t === '-') left--
+    else if (t === ' ') left -= 2
     if (t === '+') {
       h.lines.push({ t, text: line.slice(1), o: null, n: n++ })
       f.added++

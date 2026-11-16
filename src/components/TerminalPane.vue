@@ -235,8 +235,8 @@ function indexOfBytes(hay, needle) {
 }
 /** Show output from the session (and record it when a recording is running). */
 function put(b) {
-  if (S().input_bar) marks.feed(b)
-  else show(b)
+  if (!S().input_bar) return show(b)
+  marks.feed(typeof b === 'string' ? new TextEncoder().encode(b) : b) // the marks are read from bytes
 }
 function show(b) {
   term.write(b)
