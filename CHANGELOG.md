@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Passwords: a new sidebar page for passwords that don't belong to a host (databases, sudo, web consoles, API
+  tokens), each with a name, username, website or host, notes and tags. They live in the encrypted vault and are part
+  of the encrypted backup.
+  - A list next to the details of the selected password; edit in place, with a warning before unsaved changes are
+    dropped. In a narrow window the list and the details take turns.
+  - Click the username, password or address to copy it. Copied passwords are hidden from clipboard history and
+    cleared after the Settings → Security timeout. Passwords can also be copied from the command palette
+    (<kbd>⌘K</kbd>).
+  - Weak and reused passwords are flagged (reused also counts host passwords), with filters for them and for tags.
+  - Sort by name or by last update; right-click to copy, open the website, edit, duplicate or delete.
+  - Keyboard: <kbd>↑</kbd> <kbd>↓</kbd> to move, <kbd>Enter</kbd> copies the password, <kbd>⌘F</kbd> searches,
+    <kbd>⌘N</kbd> adds one, <kbd>⌘Enter</kbd> saves, <kbd>Esc</kbd> cancels (<kbd>Ctrl</kbd> on Windows and Linux).
+- Password generator in the password editor and in the host editor: 8 to 64 characters, choose lowercase, uppercase,
+  digits and symbols, optionally leave out look-alike characters (0 O 1 l I), with a strength estimate. Passwords
+  come from the OS random number generator.
+
 ## [0.7.0] - 2026-11-15
 
 ### Added

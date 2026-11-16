@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import { resolveSnippet } from '../lib/snippetvars'
+import { copySecret } from '../lib/lock'
 import {
   store,
   connectHost,
@@ -51,6 +52,15 @@ const items = computed(() => {
   for (const sn of store.vault.snippets) {
     if (s && (sn.name + ' ' + sn.command).toLowerCase().includes(s))
       out.push({ icon: 'code', label: sn.name, sub: sn.command, run: () => runSnippet(sn) })
+  }
+  for (const pw of store.vault.passwords || []) {
+    if (s && pw.password && [pw.name, pw.username, pw.url].join(' ').toLowerCase().includes(s))
+      out.push({
+        icon: 'lock',
+        label: `Copy password: ${pw.name}`,
+        sub: [pw.username, pw.url].filter(Boolean).join(' · '),
+        run: () => copySecret(pw.password, 'Password'),
+      })
   }
   // quick connect: user@host[:port]
   const m = q.value.trim().match(/^(?:ssh\s+)?(?:([^@\s]+)@)?([\w.-]+)(?::(\d+))?$/)
@@ -125,7 +135,7 @@ async function runSnippet(sn) {
           v-model="q"
           @input="sel = 0"
           @keydown="key"
-          placeholder="Search hosts, snippets… or type user@host to quick connect"
+          placeholder="Search hosts, snippets, passwords… or type user@host to quick connect"
         />
       </div>
       <div class="res">

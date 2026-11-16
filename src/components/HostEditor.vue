@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { PROTOCOLS, S3_PRESETS, BAUD_RATES, SERIAL_DEFAULTS, isObjectStorage } from '../lib/os'
 import Icon from './Icon.vue'
+import PasswordGenerator from './PasswordGenerator.vue'
 
 const blank = {
   id: '',
@@ -36,6 +37,7 @@ const h = reactive({ ...blank, ...(store.editor.host || {}) })
 for (const [k, v] of Object.entries(SERIAL_DEFAULTS)) if (!h[k]) h[k] = v // saved before serial existed
 const tags = ref((h.tags || []).join(', '))
 const showPass = ref(false)
+const showGen = ref(false)
 const testing = ref(false)
 const isNew = !h.id
 const groups = computed(() => [...new Set(store.vault.hosts.map((x) => x.group).filter(Boolean))])
@@ -374,7 +376,15 @@ async function test() {
                 placeholder="optional when using a key"
               />
               <button type="button" class="iconbtn" @click="showPass = !showPass"><Icon name="eye" /></button>
+              <button type="button" class="iconbtn" title="Generate password" @click="showGen = !showGen">
+                <Icon name="dice" />
+              </button>
             </div>
+            <PasswordGenerator
+              v-if="showGen"
+              @use="(v) => ((h.password = v), (showPass = true), (showGen = false))"
+              @close="showGen = false"
+            />
           </div>
           <template v-if="h.protocol === 'ssh'">
             <div class="field">

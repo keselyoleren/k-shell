@@ -21,7 +21,7 @@ const OS = {
 }
 // Muted, earthy colours; a host always gets the same one (derived from its name).
 const PALETTE = ['#C8553D', '#2F5D8A', '#5B7F4E', '#8A5A44', '#6B5B95', '#B07D2B', '#3E7C7B', '#7A4E6B']
-function pick(name) {
+export function pick(name) {
   let h = 0
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0
   return PALETTE[h % PALETTE.length]

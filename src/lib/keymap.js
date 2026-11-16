@@ -90,6 +90,7 @@ export const ACTIONS = [
   },
   { id: 'workspaces', group: 'General', label: 'Workspaces', run: () => showVault('workspaces') },
   { id: 'snippets', group: 'General', label: 'Snippets', run: () => showVault('snippets') },
+  { id: 'passwords', group: 'General', label: 'Passwords', run: () => showVault('passwords') },
   { id: 'keys', group: 'General', label: 'Keychain', run: () => showVault('keys') },
   { id: 'forwards', group: 'General', label: 'Port forwarding', run: () => showVault('forwards') },
   {
