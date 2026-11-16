@@ -68,3 +68,11 @@ export function push(series, v, max = 60) {
   if (series.length > max) series.splice(0, series.length - max)
   return series
 }
+
+/** Bytes in a size Docker prints: "1.78GB", "332.2MiB", "4.1kB", "0B"; null if unreadable. */
+export function parseSize(s) {
+  const m = /^\s*([\d.]+)\s*([kKMGTP]?)(i?)B\s*$/.exec(s || '')
+  if (!m) return null
+  const base = m[3] ? 1024 : 1000
+  return parseFloat(m[1]) * base ** ' KMGTP'.indexOf(m[2].toUpperCase() || ' ')
+}

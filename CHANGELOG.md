@@ -30,6 +30,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
   notes, in any order), or read as `name,host,port,user,group` without one. Comma or semicolon separated, UTF-8 or
   Windows-1252. A password column is never imported. (#26)
 
+### Changed
+- Containers: the usage cards of a running container say more. CPU, memory and process count have a graph of the
+  last few minutes (updated every 4 seconds while the overview is open); CPU and memory turn yellow and red near
+  their limit, and say whether memory is measured against a limit or the host's memory. Network and disk I/O show
+  received and sent side by side with their share and the average rate since the container started; processes show
+  the uptime; disk shows the container's own layer next to its image.
+
 ## [0.7.0] - 2026-11-15
 
 ### Added
