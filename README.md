@@ -82,7 +82,7 @@ Once installed, K-Shell updates itself: an **Update K-Shell** button appears whe
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs) ≥ 1.85, [Node.js](https://nodejs.org) ≥ 20, and the
+Prerequisites: [Rust](https://rustup.rs) ≥ 1.85, [Node.js](https://nodejs.org) ≥ 22.12, and the
 [Tauri system dependencies](https://tauri.app/start/prerequisites/) for your OS.
 
 ```bash

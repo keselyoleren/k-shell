@@ -5,7 +5,7 @@
 | Tool | Version |
 |---|---|
 | [Rust](https://rustup.rs) | 1.85 or newer (`rustup update stable`) |
-| [Node.js](https://nodejs.org) | 20 or newer |
+| [Node.js](https://nodejs.org) | 22.12 or newer |
 | Docker | optional, only for end-to-end tests |
 
 Plus the system libraries Tauri needs:
